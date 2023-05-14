@@ -137,8 +137,8 @@ pub fn lex(input: &str) -> Vec<Token> {
             char if char.is_ascii_alphabetic() || char == '_' => {
                 let mut value = String::from(char);
                 loop {
-                    match chars.next() {
-                        Some(char) if char.is_alphanumeric() => {
+                    match chars.next_if(|char| char.is_alphanumeric()) {
+                        Some(char) => {
                             value.push(char);
                         }
                         _ => {
@@ -182,11 +182,9 @@ mod test {
     use super::*;
 
     #[test]
-    fn can_scan_single_character_tokens() {
-        let tokens = lex("(){},.-+;*");
-
+    fn can_lex_single_character_tokens() {
         assert_eq!(
-            tokens,
+            lex("(){},.-+;*"),
             vec![
                 Token::LeftParen,
                 Token::RightParen,
@@ -204,10 +202,8 @@ mod test {
 
     #[test]
     fn can_distinguish_between_single_and_multi_character_operators() {
-        let tokens = lex("! != = == < <= > >= / //");
-
         assert_eq!(
-            tokens,
+            lex("! != = == < <= > >= / //"),
             vec![
                 Token::Bang,
                 Token::BangEqual,
@@ -224,54 +220,43 @@ mod test {
 
     #[test]
     fn all_tokens_following_a_comment_are_ignored() {
-        let tokens = lex("// () {}\n+");
-
-        assert_eq!(tokens, vec![Token::Plus]);
+        assert_eq!(lex("// () {}\n+"), vec![Token::Plus]);
     }
 
     #[test]
-    fn can_scan_string_literals() {
-        let tokens = lex("\"Hello, world!\"");
-
+    fn can_lex_string_literals() {
         assert_eq!(
-            tokens,
+            lex("\"Hello, world!\""),
             vec![Token::Literal(Literal::String("Hello, world!".to_string()))]
         );
     }
 
     #[test]
-    fn can_scan_empty_string_literals() {
-        let tokens = lex("\"\"");
-
+    fn can_lex_empty_string_literals() {
         assert_eq!(
-            tokens,
+            lex("\"\""),
             vec![Token::Literal(Literal::String("".to_string()))]
         );
     }
 
     #[test]
-    fn can_scan_unterminated_string_literals() {
+    fn can_lex_unterminated_string_literals() {
         let tokens = lex("\"Hello, wor");
-
         assert!(tokens.is_empty());
     }
 
     #[test]
-    fn can_scan_multi_line_string_literals() {
-        let tokens = lex("\"Hello, wor\nld!\"");
-
+    fn can_lex_multi_line_string_literals() {
         assert_eq!(
-            tokens,
+            lex("\"Hello, wor\nld!\""),
             vec![Token::Literal(Literal::String("Hello, world!".to_string()))]
         );
     }
 
     #[test]
-    fn can_scan_number_literals() {
-        let tokens = lex("1 1234 12.34 .1234 1234.");
-
+    fn can_lex_number_literals() {
         assert_eq!(
-            tokens,
+            lex("1 1234 12.34 .1234 1234."),
             vec![
                 Token::Literal(Literal::Number(1.0)),
                 Token::Literal(Literal::Number(1234.0)),
@@ -285,11 +270,9 @@ mod test {
     }
 
     #[test]
-    fn can_scan_identifiers_and_keywords() {
-        let tokens = lex("hello and class while value");
-
+    fn can_lex_identifiers_and_keywords() {
         assert_eq!(
-            tokens,
+            lex("hello and class while value"),
             vec![
                 Token::Literal(Literal::Identifier("hello".to_string())),
                 Token::Keyword(Keyword::And),
@@ -297,6 +280,14 @@ mod test {
                 Token::Keyword(Keyword::While),
                 Token::Literal(Literal::Identifier("value".to_string()))
             ]
+        );
+    }
+
+    #[test]
+    fn can_lex_unary_expression_statement() {
+        assert_eq!(
+            lex("!true;"),
+            vec![Token::Bang, Token::Keyword(Keyword::True), Token::Semicolon]
         );
     }
 }

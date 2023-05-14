@@ -4,14 +4,80 @@ mod visitor;
 pub use visitor::Visitor;
 
 #[derive(Debug, PartialEq)]
+pub enum Stmt {
+    Block(BlockStmt),
+    Expr(ExprStmt),
+    Print(PrintStmt),
+    Var(VarStmt),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct BlockStmt {
+    stmts: Vec<Stmt>,
+}
+
+impl BlockStmt {
+    pub fn stmts(&self) -> &[Stmt] {
+        &self.stmts
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ExprStmt {
+    expr: Expr,
+}
+
+impl ExprStmt {
+    pub fn expr(&self) -> &Expr {
+        &self.expr
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PrintStmt {
+    expr: Expr,
+}
+
+impl PrintStmt {
+    pub fn expr(&self) -> &Expr {
+        &self.expr
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct VarStmt {
+    ident: String,
+    init: Option<Expr>,
+}
+
+impl VarStmt {
+    pub fn ident(&self) -> &str {
+        self.ident.as_str()
+    }
+
+    pub fn init(&self) -> Option<&Expr> {
+        self.init.as_ref()
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum Expr {
+    Assign(AssignExpr),
     Binary(BinaryExpr),
     Group(GroupExpr),
     Literal(LiteralExpr),
     Unary(UnaryExpr),
+    Var(VarExpr),
 }
 
 impl Expr {
+    fn assign(ident: String, value: Expr) -> Expr {
+        Expr::Assign(AssignExpr {
+            ident,
+            value: Box::new(value),
+        })
+    }
+
     fn binary(left: Expr, operator: Token, right: Expr) -> Expr {
         Expr::Binary(BinaryExpr {
             left: Box::new(left),
@@ -31,6 +97,22 @@ impl Expr {
         Expr::Group(GroupExpr {
             expr: Box::new(expr),
         })
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct AssignExpr {
+    ident: String,
+    value: Box<Expr>,
+}
+
+impl AssignExpr {
+    pub fn ident(&self) -> &str {
+        self.ident.as_str()
+    }
+
+    pub fn value(&self) -> &Expr {
+        &self.value
     }
 }
 
@@ -114,6 +196,17 @@ impl From<&str> for Expr {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct VarExpr {
+    ident: String,
+}
+
+impl VarExpr {
+    pub fn ident(&self) -> &str {
+        self.ident.as_str()
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("unexpected end of token stream")]
@@ -121,15 +214,107 @@ pub enum Error {
 
     #[error("unexpected token {0:?}")]
     UnexpectedToken(Token),
+
+    #[error("invalid assignment")]
+    InvalidAssignment,
 }
 
-pub fn parse(tokens: &[Token]) -> Result<Expr, Error> {
-    let (expr, _) = expression(tokens)?;
-    Ok(expr)
+pub fn parse(mut tokens: &[Token]) -> Result<Vec<Stmt>, Error> {
+    let mut statements = vec![];
+
+    while !tokens.is_empty() {
+        let (statement, remaining_tokens) = statement(tokens)?;
+
+        statements.push(statement);
+        tokens = remaining_tokens;
+    }
+
+    Ok(statements)
+}
+
+fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    match peek(tokens) {
+        Some(Token::LeftBrace) => block_statement(tokens),
+        Some(Token::Keyword(Keyword::Var)) => var_statement(tokens),
+        Some(Token::Keyword(Keyword::Print)) => print_statement(tokens),
+        _ => expression_statement(tokens),
+    }
+}
+
+fn block_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let mut block = BlockStmt { stmts: vec![] };
+
+    let (_, mut tokens) = next_exact(Token::LeftBrace)(tokens)?;
+
+    while !matches!(peek(tokens), Some(Token::RightBrace)) {
+        let (stmt, remaining_tokens) = statement(tokens)?;
+
+        block.stmts.push(stmt);
+        tokens = remaining_tokens;
+    }
+
+    let (_, tokens) = next_exact(Token::RightBrace)(tokens)?;
+
+    Ok((Stmt::Block(block), tokens))
+}
+
+fn var_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let (_, tokens) = next_exact(Token::Keyword(Keyword::Var))(tokens)?;
+    let (ident, tokens) = next(tokens)?;
+
+    let ident = if let Token::Literal(Literal::Identifier(ident)) = ident {
+        ident.clone()
+    } else {
+        return Err(Error::UnexpectedToken(ident.clone()));
+    };
+
+    let (init, tokens) = match next_if(Token::Equal)(tokens)? {
+        Some((_, tokens)) => {
+            let (expr, tokens) = expression(tokens)?;
+            (Some(expr), tokens)
+        }
+        None => (None, tokens),
+    };
+
+    let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
+
+    let stmt = Stmt::Var(VarStmt { ident, init });
+
+    Ok((stmt, tokens))
+}
+
+fn print_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let (_, tokens) = next_exact(Token::Keyword(Keyword::Print))(tokens)?;
+    let (expr, tokens) = expression(tokens)?;
+    let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
+    Ok((Stmt::Print(PrintStmt { expr }), tokens))
+}
+
+fn expression_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let (expr, tokens) = expression(tokens)?;
+    let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
+    Ok((Stmt::Expr(ExprStmt { expr }), tokens))
 }
 
 fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
-    equality(tokens)
+    assignment(tokens)
+}
+
+fn assignment(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
+    let (expr, tokens) = equality(tokens)?;
+
+    match peek(tokens) {
+        Some(Token::Equal) => {
+            let (_equal, tokens) = next(tokens)?;
+            let (value, tokens) = assignment(tokens)?;
+
+            match expr {
+                Expr::Var(VarExpr { ident }) => Ok((Expr::assign(ident, value), tokens)),
+                _ => Err(Error::InvalidAssignment),
+            }
+        }
+        _ => Ok((expr, tokens)),
+    }
 }
 
 fn equality(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
@@ -189,8 +374,9 @@ fn factor(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
 }
 
 fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
-    match next(tokens)? {
-        (operator @ Token::Bang | operator @ Token::Minus, tokens) => {
+    match peek(tokens) {
+        Some(Token::Bang | Token::Minus) => {
+            let (operator, tokens) = next(tokens)?;
             let (expr, tokens) = unary(tokens)?;
             Ok((Expr::unary(operator.clone(), expr), tokens))
         }
@@ -213,8 +399,18 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
         (Token::Literal(Literal::String(string)), tokens) => {
             Ok((Expr::from(string.as_str()), tokens))
         }
+        (Token::Literal(Literal::Identifier(ident)), tokens) => Ok((
+            Expr::Var(VarExpr {
+                ident: ident.clone(),
+            }),
+            tokens,
+        )),
         (token, _) => Err(Error::UnexpectedToken(token.clone())),
     }
+}
+
+fn peek(tokens: &[Token]) -> Option<&Token> {
+    tokens.first()
 }
 
 fn next(tokens: &[Token]) -> Result<(&Token, &[Token]), Error> {
@@ -224,8 +420,14 @@ fn next(tokens: &[Token]) -> Result<(&Token, &[Token]), Error> {
     }
 }
 
-fn peek(tokens: &[Token]) -> Option<&Token> {
-    tokens.first()
+fn next_if(
+    expected_token: Token,
+) -> impl Fn(&[Token]) -> Result<Option<(&Token, &[Token])>, Error> {
+    move |tokens: &[Token]| match tokens.first() {
+        Some(token) if token == &expected_token => Ok(Some((token, &tokens[1..]))),
+        Some(_) => Ok(None),
+        None => Err(Error::UnexpectedEndOfTokenStream),
+    }
 }
 
 fn next_exact(expected_token: Token) -> impl Fn(&[Token]) -> Result<(&Token, &[Token]), Error> {
@@ -242,36 +444,48 @@ mod test {
 
     #[test]
     fn parse_string() {
-        let tokens = lex("\"Hello, world!\"");
-        let ast = parse(&tokens).unwrap();
+        let tokens = lex("\"Hello, world!\";");
+        let statements = parse(&tokens).unwrap();
 
-        assert_eq!(ast, Expr::from("Hello, world!"));
+        assert_eq!(
+            statements,
+            vec![Stmt::Expr(ExprStmt {
+                expr: Expr::from("Hello, world!")
+            })]
+        );
     }
 
     #[test]
     fn parse_unary_expression() {
-        let tokens = lex("!true");
-        let ast = parse(&tokens).unwrap();
+        let tokens = lex("!true;");
+        let statements: Vec<Stmt> = parse(&tokens).unwrap();
 
-        assert_eq!(ast, Expr::unary(Token::Bang, Expr::from(true)));
+        assert_eq!(
+            statements,
+            vec![Stmt::Expr(ExprStmt {
+                expr: Expr::unary(Token::Bang, Expr::from(true))
+            })]
+        );
     }
 
     #[test]
     fn parse_terms_and_factors() {
-        let tokens = lex("1 + 2 - 3 * 4 / 5");
-        let ast = parse(&tokens).unwrap();
+        let tokens = lex("1 + 2 - 3 * 4 / 5;");
+        let statements = parse(&tokens).unwrap();
 
         assert_eq!(
-            ast,
-            Expr::binary(
-                Expr::binary(Expr::from(1), Token::Plus, Expr::from(2)),
-                Token::Minus,
-                Expr::binary(
-                    Expr::binary(Expr::from(3), Token::Star, Expr::from(4)),
-                    Token::Slash,
-                    Expr::from(5)
+            statements,
+            vec![Stmt::Expr(ExprStmt {
+                expr: Expr::binary(
+                    Expr::binary(Expr::from(1), Token::Plus, Expr::from(2)),
+                    Token::Minus,
+                    Expr::binary(
+                        Expr::binary(Expr::from(3), Token::Star, Expr::from(4)),
+                        Token::Slash,
+                        Expr::from(5)
+                    )
                 )
-            )
+            })]
         );
     }
 }

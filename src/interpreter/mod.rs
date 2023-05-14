@@ -1,19 +1,39 @@
-use crate::{
-    lexer::{lex, Token},
-    parser::{self, parse, BinaryExpr, Expr, GroupExpr, LiteralExpr, UnaryExpr, Visitor},
+use {
+    crate::{
+        lexer::{lex, Token},
+        parser::{
+            self, parse, AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupExpr, LiteralExpr,
+            PrintStmt, Stmt, UnaryExpr, VarExpr, VarStmt, Visitor,
+        },
+    },
+    std::collections::HashMap,
 };
 
 mod value;
 pub use value::Value;
 
-#[derive(Default)]
-pub struct Interpreter {}
+pub struct Interpreter {
+    environments: Vec<HashMap<String, Value>>,
+}
+
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self {
+            environments: vec![HashMap::new()],
+        }
+    }
+}
 
 impl Interpreter {
-    pub fn interpret(&mut self, expression: &str) -> Result<Value, Error> {
-        let tokens = lex(expression);
-        let ast = parse(&tokens)?;
-        self.visit_expr(&ast)
+    pub fn interpret(&mut self, program: &str) -> Result<(), Error> {
+        let tokens = lex(program);
+        let stmts = parse(&tokens)?;
+
+        for stmt in stmts {
+            self.visit_stmt(&stmt)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -24,6 +44,9 @@ pub enum Error {
 
     #[error(transparent)]
     Value(#[from] value::Error),
+
+    #[error("undefined variable {0}")]
+    UndefinedVar(String),
 
     #[error("unexpected unary operator {0:?}")]
     UnexpectedUnaryOperator(Token),
@@ -36,13 +59,72 @@ impl Visitor for Interpreter {
     type Output = Value;
     type Error = Error;
 
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Error> {
+        match stmt {
+            Stmt::Block(stmt) => self.visit_block_stmt(stmt),
+            Stmt::Expr(stmt) => self.visit_expr_stmt(stmt),
+            Stmt::Print(stmt) => self.visit_print_stmt(stmt),
+            Stmt::Var(stmt) => self.visit_var_stmt(stmt),
+        }
+    }
+
+    fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<(), Self::Error> {
+        self.environments.push(HashMap::default());
+        for stmt in stmt.stmts() {
+            self.visit_stmt(stmt)?;
+        }
+        self.environments.pop();
+        Ok(())
+    }
+
+    fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), Self::Error> {
+        let _value = self.visit_expr(stmt.expr())?;
+        Ok(())
+    }
+
+    fn visit_print_stmt(&mut self, stmt: &PrintStmt) -> Result<(), Self::Error> {
+        let value = self.visit_expr(stmt.expr())?;
+        println!("{value}");
+        Ok(())
+    }
+
+    fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<(), Self::Error> {
+        let init_value = if let Some(expr) = stmt.init() {
+            self.visit_expr(expr)?
+        } else {
+            Value::Nil
+        };
+
+        self.environments
+            .last_mut()
+            .expect("at least one environment")
+            .insert(stmt.ident().to_string(), init_value);
+
+        Ok(())
+    }
+
     fn visit_expr(&mut self, expr: &Expr) -> Result<Self::Output, Self::Error> {
         match expr {
+            Expr::Assign(expr) => self.visit_assign_expr(expr),
             Expr::Binary(expr) => self.visit_binary_expr(expr),
             Expr::Unary(expr) => self.visit_unary_expr(expr),
             Expr::Group(expr) => self.visit_group_expr(expr),
             Expr::Literal(expr) => self.visit_literal_expr(expr),
+            Expr::Var(expr) => self.visit_var_expr(expr),
         }
+    }
+
+    fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<Self::Output, Self::Error> {
+        let value = self.visit_expr(expr.value())?;
+
+        for environment in self.environments.iter_mut().rev() {
+            if environment.contains_key(expr.ident()) {
+                environment.insert(expr.ident().to_string(), value.clone());
+                return Ok(value);
+            }
+        }
+
+        Err(Error::UndefinedVar(expr.ident().to_string()))
     }
 
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Result<Self::Output, Self::Error> {
@@ -82,16 +164,14 @@ impl Visitor for Interpreter {
             LiteralExpr::String(value) => Ok(Value::String(value.clone())),
         }
     }
-}
 
-#[cfg(test)]
-mod test {
-    use super::*;
+    fn visit_var_expr(&mut self, expr: &VarExpr) -> Result<Self::Output, Self::Error> {
+        for environment in self.environments.iter().rev() {
+            if let Some(value) = environment.get(expr.ident()) {
+                return Ok(value.clone());
+            }
+        }
 
-    #[test]
-    fn evaluate_simple_expression() {
-        let result = Interpreter::default().interpret("2 + 2").unwrap();
-
-        assert_eq!(result, Value::Number(4.0));
+        Err(Error::UndefinedVar(expr.ident().to_string()))
     }
 }
