@@ -185,51 +185,57 @@ mod test {
     fn can_scan_single_character_tokens() {
         let tokens = lex("(){},.-+;*");
 
-        assert_eq!(tokens.len(), 10);
-        assert_eq!(tokens[0], Token::LeftParen);
-        assert_eq!(tokens[1], Token::RightParen);
-        assert_eq!(tokens[2], Token::LeftBrace);
-        assert_eq!(tokens[3], Token::RightBrace);
-        assert_eq!(tokens[4], Token::Comma);
-        assert_eq!(tokens[5], Token::Dot);
-        assert_eq!(tokens[6], Token::Minus);
-        assert_eq!(tokens[7], Token::Plus);
-        assert_eq!(tokens[8], Token::Semicolon);
-        assert_eq!(tokens[9], Token::Star);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::LeftParen,
+                Token::RightParen,
+                Token::LeftBrace,
+                Token::RightBrace,
+                Token::Comma,
+                Token::Dot,
+                Token::Minus,
+                Token::Plus,
+                Token::Semicolon,
+                Token::Star
+            ]
+        );
     }
 
     #[test]
     fn can_distinguish_between_single_and_multi_character_operators() {
         let tokens = lex("! != = == < <= > >= / //");
 
-        assert_eq!(tokens.len(), 9);
-        assert_eq!(tokens[0], Token::Bang);
-        assert_eq!(tokens[1], Token::BangEqual);
-        assert_eq!(tokens[2], Token::Equal);
-        assert_eq!(tokens[3], Token::EqualEqual);
-        assert_eq!(tokens[4], Token::Less);
-        assert_eq!(tokens[5], Token::LessEqual);
-        assert_eq!(tokens[6], Token::Greater);
-        assert_eq!(tokens[7], Token::GreaterEqual);
-        assert_eq!(tokens[8], Token::Slash)
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Bang,
+                Token::BangEqual,
+                Token::Equal,
+                Token::EqualEqual,
+                Token::Less,
+                Token::LessEqual,
+                Token::Greater,
+                Token::GreaterEqual,
+                Token::Slash
+            ]
+        );
     }
 
     #[test]
     fn all_tokens_following_a_comment_are_ignored() {
         let tokens = lex("// () {}\n+");
 
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0], Token::Plus);
+        assert_eq!(tokens, vec![Token::Plus]);
     }
 
     #[test]
     fn can_scan_string_literals() {
         let tokens = lex("\"Hello, world!\"");
 
-        assert_eq!(tokens.len(), 1);
         assert_eq!(
-            tokens[0],
-            Token::Literal(Literal::String("Hello, world!".to_string()))
+            tokens,
+            vec![Token::Literal(Literal::String("Hello, world!".to_string()))]
         );
     }
 
@@ -237,8 +243,10 @@ mod test {
     fn can_scan_empty_string_literals() {
         let tokens = lex("\"\"");
 
-        assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0], Token::Literal(Literal::String("".to_string())));
+        assert_eq!(
+            tokens,
+            vec![Token::Literal(Literal::String("".to_string()))]
+        );
     }
 
     #[test]
@@ -252,10 +260,9 @@ mod test {
     fn can_scan_multi_line_string_literals() {
         let tokens = lex("\"Hello, wor\nld!\"");
 
-        assert_eq!(tokens.len(), 1);
         assert_eq!(
-            tokens[0],
-            Token::Literal(Literal::String("Hello, world!".to_string()))
+            tokens,
+            vec![Token::Literal(Literal::String("Hello, world!".to_string()))]
         );
     }
 
@@ -263,31 +270,33 @@ mod test {
     fn can_scan_number_literals() {
         let tokens = lex("1 1234 12.34 .1234 1234.");
 
-        assert_eq!(tokens.len(), 7);
-        assert_eq!(tokens[0], Token::Literal(Literal::Number(1.0)));
-        assert_eq!(tokens[1], Token::Literal(Literal::Number(1234.0)));
-        assert_eq!(tokens[2], Token::Literal(Literal::Number(12.34)));
-        assert_eq!(tokens[3], Token::Dot);
-        assert_eq!(tokens[4], Token::Literal(Literal::Number(1234.0)));
-        assert_eq!(tokens[5], Token::Literal(Literal::Number(1234.0)));
-        assert_eq!(tokens[6], Token::Dot);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Literal(Literal::Number(1.0)),
+                Token::Literal(Literal::Number(1234.0)),
+                Token::Literal(Literal::Number(12.34)),
+                Token::Dot,
+                Token::Literal(Literal::Number(1234.0)),
+                Token::Literal(Literal::Number(1234.0)),
+                Token::Dot
+            ]
+        );
     }
 
     #[test]
     fn can_scan_identifiers_and_keywords() {
         let tokens = lex("hello and class while value");
 
-        assert_eq!(tokens.len(), 5);
         assert_eq!(
-            tokens[0],
-            Token::Literal(Literal::Identifier("hello".to_string()))
-        );
-        assert_eq!(tokens[1], Token::Keyword(Keyword::And));
-        assert_eq!(tokens[2], Token::Keyword(Keyword::Class));
-        assert_eq!(tokens[3], Token::Keyword(Keyword::While));
-        assert_eq!(
-            tokens[4],
-            Token::Literal(Literal::Identifier("value".to_string()))
+            tokens,
+            vec![
+                Token::Literal(Literal::Identifier("hello".to_string())),
+                Token::Keyword(Keyword::And),
+                Token::Keyword(Keyword::Class),
+                Token::Keyword(Keyword::While),
+                Token::Literal(Literal::Identifier("value".to_string()))
+            ]
         );
     }
 }

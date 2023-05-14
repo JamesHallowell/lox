@@ -1,6 +1,7 @@
 use crate::lexer::{Keyword, Literal, Token};
 
 mod visitor;
+pub use visitor::Visitor;
 
 #[derive(Debug, PartialEq)]
 pub enum Expr {
@@ -83,8 +84,8 @@ impl GroupExpr {
 
 #[derive(Debug, PartialEq)]
 pub enum LiteralExpr {
-    Boolean(bool),
     Nil,
+    Boolean(bool),
     Number(f64),
     String(String),
 }
@@ -118,8 +119,8 @@ pub enum Error {
     #[error("unexpected end of token stream")]
     UnexpectedEndOfTokenStream,
 
-    #[error("unexpected token")]
-    UnexpectedToken,
+    #[error("unexpected token {0:?}")]
+    UnexpectedToken(Token),
 }
 
 pub fn parse(tokens: &[Token]) -> Result<Expr, Error> {
@@ -191,13 +192,7 @@ fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
     match next(tokens)? {
         (operator @ Token::Bang | operator @ Token::Minus, tokens) => {
             let (expr, tokens) = unary(tokens)?;
-            Ok((
-                Expr::Unary(UnaryExpr {
-                    operator: operator.clone(),
-                    right: Box::new(expr),
-                }),
-                tokens,
-            ))
+            Ok((Expr::unary(operator.clone(), expr), tokens))
         }
         _ => primary(tokens),
     }
@@ -215,7 +210,10 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
             Ok((Expr::group(expr), tokens))
         }
         (Token::Literal(Literal::Number(number)), tokens) => Ok((Expr::from(*number), tokens)),
-        _ => Err(Error::UnexpectedToken),
+        (Token::Literal(Literal::String(string)), tokens) => {
+            Ok((Expr::from(string.as_str()), tokens))
+        }
+        (token, _) => Err(Error::UnexpectedToken(token.clone())),
     }
 }
 
@@ -233,7 +231,8 @@ fn peek(tokens: &[Token]) -> Option<&Token> {
 fn next_exact(expected_token: Token) -> impl Fn(&[Token]) -> Result<(&Token, &[Token]), Error> {
     move |tokens: &[Token]| match tokens.first() {
         Some(token) if token == &expected_token => Ok((token, &tokens[1..])),
-        _ => Err(Error::UnexpectedToken),
+        Some(token) => Err(Error::UnexpectedToken(token.clone())),
+        None => Err(Error::UnexpectedEndOfTokenStream),
     }
 }
 
@@ -242,22 +241,28 @@ mod test {
     use {super::*, crate::lexer::lex};
 
     #[test]
+    fn parse_string() {
+        let tokens = lex("\"Hello, world!\"");
+        let ast = parse(&tokens).unwrap();
+
+        assert_eq!(ast, Expr::from("Hello, world!"));
+    }
+
+    #[test]
     fn parse_unary_expression() {
         let tokens = lex("!true");
-        let (expr, tokens) = unary(&tokens).unwrap();
+        let ast = parse(&tokens).unwrap();
 
-        assert!(tokens.is_empty());
-        assert_eq!(expr, Expr::unary(Token::Bang, Expr::from(true)));
+        assert_eq!(ast, Expr::unary(Token::Bang, Expr::from(true)));
     }
 
     #[test]
     fn parse_terms_and_factors() {
         let tokens = lex("1 + 2 - 3 * 4 / 5");
-        let (expr, tokens) = term(&tokens).unwrap();
+        let ast = parse(&tokens).unwrap();
 
-        assert!(tokens.is_empty());
         assert_eq!(
-            expr,
+            ast,
             Expr::binary(
                 Expr::binary(Expr::from(1), Token::Plus, Expr::from(2)),
                 Token::Minus,
