@@ -1,4 +1,4 @@
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     LeftParen,
     RightParen,
@@ -23,14 +23,14 @@ pub enum Token {
     Keyword(Keyword),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Identifier(String),
     String(String),
     Number(f64),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Keyword {
     And,
     Class,
@@ -50,7 +50,7 @@ pub enum Keyword {
     While,
 }
 
-fn scan_tokens(input: &str) -> impl Iterator<Item = Token> {
+pub fn lex(input: &str) -> Vec<Token> {
     let mut chars = input.chars().peekable();
     let mut tokens = vec![];
 
@@ -174,7 +174,7 @@ fn scan_tokens(input: &str) -> impl Iterator<Item = Token> {
         }
     }
 
-    tokens.into_iter()
+    tokens
 }
 
 #[cfg(test)]
@@ -183,7 +183,7 @@ mod test {
 
     #[test]
     fn can_scan_single_character_tokens() {
-        let tokens = scan_tokens("(){},.-+;*").collect::<Vec<_>>();
+        let tokens = lex("(){},.-+;*");
 
         assert_eq!(tokens.len(), 10);
         assert_eq!(tokens[0], Token::LeftParen);
@@ -200,7 +200,7 @@ mod test {
 
     #[test]
     fn can_distinguish_between_single_and_multi_character_operators() {
-        let tokens = scan_tokens("! != = == < <= > >= / //").collect::<Vec<_>>();
+        let tokens = lex("! != = == < <= > >= / //");
 
         assert_eq!(tokens.len(), 9);
         assert_eq!(tokens[0], Token::Bang);
@@ -216,7 +216,7 @@ mod test {
 
     #[test]
     fn all_tokens_following_a_comment_are_ignored() {
-        let tokens = scan_tokens("// () {}\n+").collect::<Vec<_>>();
+        let tokens = lex("// () {}\n+");
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0], Token::Plus);
@@ -224,7 +224,7 @@ mod test {
 
     #[test]
     fn can_scan_string_literals() {
-        let tokens = scan_tokens("\"Hello, world!\"").collect::<Vec<_>>();
+        let tokens = lex("\"Hello, world!\"");
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(
@@ -235,7 +235,7 @@ mod test {
 
     #[test]
     fn can_scan_empty_string_literals() {
-        let tokens = scan_tokens("\"\"").collect::<Vec<_>>();
+        let tokens = lex("\"\"");
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0], Token::Literal(Literal::String("".to_string())));
@@ -243,14 +243,14 @@ mod test {
 
     #[test]
     fn can_scan_unterminated_string_literals() {
-        let tokens = scan_tokens("\"Hello, wor").collect::<Vec<_>>();
+        let tokens = lex("\"Hello, wor");
 
         assert!(tokens.is_empty());
     }
 
     #[test]
     fn can_scan_multi_line_string_literals() {
-        let tokens = scan_tokens("\"Hello, wor\nld!\"").collect::<Vec<_>>();
+        let tokens = lex("\"Hello, wor\nld!\"");
 
         assert_eq!(tokens.len(), 1);
         assert_eq!(
@@ -261,7 +261,7 @@ mod test {
 
     #[test]
     fn can_scan_number_literals() {
-        let tokens = scan_tokens("1 1234 12.34 .1234 1234.").collect::<Vec<_>>();
+        let tokens = lex("1 1234 12.34 .1234 1234.");
 
         assert_eq!(tokens.len(), 7);
         assert_eq!(tokens[0], Token::Literal(Literal::Number(1.0)));
@@ -275,7 +275,7 @@ mod test {
 
     #[test]
     fn can_scan_identifiers_and_keywords() {
-        let tokens = scan_tokens("hello and class while value").collect::<Vec<_>>();
+        let tokens = lex("hello and class while value");
 
         assert_eq!(tokens.len(), 5);
         assert_eq!(
