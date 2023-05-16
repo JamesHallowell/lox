@@ -4,7 +4,7 @@ use {
         parser::{
             self, parse, AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupExpr, IfStmt,
             LiteralExpr, LogicalExpr, LogicalOperator, PrintStmt, Stmt, UnaryExpr, VarExpr,
-            VarStmt, Visitor,
+            VarStmt, Visitor, WhileStmt,
         },
     },
     std::collections::HashMap,
@@ -95,6 +95,7 @@ where
             Stmt::If(stmt) => self.visit_if_stmt(stmt),
             Stmt::Print(stmt) => self.visit_print_stmt(stmt),
             Stmt::Var(stmt) => self.visit_var_stmt(stmt),
+            Stmt::While(stmt) => self.visit_while_stmt(stmt),
         }
     }
 
@@ -139,6 +140,14 @@ where
             .last_mut()
             .expect("at least one environment")
             .insert(stmt.ident().to_string(), init_value);
+
+        Ok(())
+    }
+
+    fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), Self::Error> {
+        while self.visit_expr(stmt.condition())?.is_truthy() {
+            self.visit_stmt(stmt.body())?;
+        }
 
         Ok(())
     }
@@ -334,6 +343,34 @@ mod test {
                 Value::String("global a".to_string()),
                 Value::String("global b".to_string()),
                 Value::String("global c".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn while_loop() {
+        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+
+        let program = r#"
+        var i = 0;
+        while (i != 5) {
+            print i;
+            i = i + 1;
+        }
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let SpyPrinter(output) = interpreter.into_printer();
+
+        assert_eq!(
+            output,
+            vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
             ]
         );
     }

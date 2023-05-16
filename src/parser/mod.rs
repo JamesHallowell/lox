@@ -10,6 +10,7 @@ pub enum Stmt {
     If(IfStmt),
     Print(PrintStmt),
     Var(VarStmt),
+    While(WhileStmt),
 }
 
 #[derive(Debug, PartialEq)]
@@ -79,6 +80,22 @@ impl VarStmt {
 
     pub fn init(&self) -> Option<&Expr> {
         self.init.as_ref()
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct WhileStmt {
+    condition: Expr,
+    body: Box<Stmt>,
+}
+
+impl WhileStmt {
+    pub fn condition(&self) -> &Expr {
+        &self.condition
+    }
+
+    pub fn body(&self) -> &Stmt {
+        self.body.as_ref()
     }
 }
 
@@ -304,6 +321,7 @@ fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
         Some(Token::Keyword(Keyword::If)) => if_statement(tokens),
         Some(Token::Keyword(Keyword::Var)) => var_statement(tokens),
         Some(Token::Keyword(Keyword::Print)) => print_statement(tokens),
+        Some(Token::Keyword(Keyword::While)) => while_statement(tokens),
         _ => expression_statement(tokens),
     }
 }
@@ -381,6 +399,23 @@ fn print_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
     let (expr, tokens) = expression(tokens)?;
     let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
     Ok((Stmt::Print(PrintStmt { expr }), tokens))
+}
+
+fn while_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let (_, tokens) = next_exact(Token::Keyword(Keyword::While))(tokens)?;
+
+    let (_, tokens) = next_exact(Token::LeftParen)(tokens)?;
+    let (condition, tokens) = expression(tokens)?;
+    let (_, tokens) = next_exact(Token::RightParen)(tokens)?;
+
+    let (body, tokens) = statement(tokens)?;
+
+    let stmt = WhileStmt {
+        condition,
+        body: Box::new(body),
+    };
+
+    Ok((Stmt::While(stmt), tokens))
 }
 
 fn expression_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
