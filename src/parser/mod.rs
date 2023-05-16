@@ -7,6 +7,7 @@ pub use visitor::Visitor;
 pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
+    If(IfStmt),
     Print(PrintStmt),
     Var(VarStmt),
 }
@@ -30,6 +31,27 @@ pub struct ExprStmt {
 impl ExprStmt {
     pub fn expr(&self) -> &Expr {
         &self.expr
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct IfStmt {
+    condition: Expr,
+    then_branch: Box<Stmt>,
+    else_branch: Option<Box<Stmt>>,
+}
+
+impl IfStmt {
+    pub fn condition(&self) -> &Expr {
+        &self.condition
+    }
+
+    pub fn then_branch(&self) -> &Stmt {
+        &self.then_branch
+    }
+
+    pub fn else_branch(&self) -> Option<&Stmt> {
+        self.else_branch.as_ref().map(|branch| branch.as_ref())
     }
 }
 
@@ -66,6 +88,7 @@ pub enum Expr {
     Binary(BinaryExpr),
     Group(GroupExpr),
     Literal(LiteralExpr),
+    Logical(LogicalExpr),
     Unary(UnaryExpr),
     Var(VarExpr),
 }
@@ -96,6 +119,22 @@ impl Expr {
     fn group(expr: Expr) -> Expr {
         Expr::Group(GroupExpr {
             expr: Box::new(expr),
+        })
+    }
+
+    fn and(left: Expr, right: Expr) -> Expr {
+        Expr::Logical(LogicalExpr {
+            left: Box::new(left),
+            operator: LogicalOperator::And,
+            right: Box::new(right),
+        })
+    }
+
+    fn or(left: Expr, right: Expr) -> Expr {
+        Expr::Logical(LogicalExpr {
+            left: Box::new(left),
+            operator: LogicalOperator::Or,
+            right: Box::new(right),
         })
     }
 }
@@ -197,6 +236,33 @@ impl From<&str> for Expr {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct LogicalExpr {
+    left: Box<Expr>,
+    operator: LogicalOperator,
+    right: Box<Expr>,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum LogicalOperator {
+    And,
+    Or,
+}
+
+impl LogicalExpr {
+    pub fn left(&self) -> &Expr {
+        self.left.as_ref()
+    }
+
+    pub fn operator(&self) -> &LogicalOperator {
+        &self.operator
+    }
+
+    pub fn right(&self) -> &Expr {
+        self.right.as_ref()
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub struct VarExpr {
     ident: String,
 }
@@ -235,6 +301,7 @@ pub fn parse(mut tokens: &[Token]) -> Result<Vec<Stmt>, Error> {
 fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
     match peek(tokens) {
         Some(Token::LeftBrace) => block_statement(tokens),
+        Some(Token::Keyword(Keyword::If)) => if_statement(tokens),
         Some(Token::Keyword(Keyword::Var)) => var_statement(tokens),
         Some(Token::Keyword(Keyword::Print)) => print_statement(tokens),
         _ => expression_statement(tokens),
@@ -256,6 +323,32 @@ fn block_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
     let (_, tokens) = next_exact(Token::RightBrace)(tokens)?;
 
     Ok((Stmt::Block(block), tokens))
+}
+
+fn if_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let (_, tokens) = next_exact(Token::Keyword(Keyword::If))(tokens)?;
+    let (_, tokens) = next_exact(Token::LeftParen)(tokens)?;
+    let (condition, tokens) = expression(tokens)?;
+    let (_, tokens) = next_exact(Token::RightParen)(tokens)?;
+
+    let (then_branch, tokens) = statement(tokens)?;
+
+    let (else_branch, tokens) = if matches!(peek(tokens), Some(Token::Keyword(Keyword::Else))) {
+        let (_, tokens) = next_exact(Token::Keyword(Keyword::Else))(tokens)?;
+        let (stmt, tokens) = statement(tokens)?;
+        (Some(stmt), tokens)
+    } else {
+        (None, tokens)
+    };
+
+    Ok((
+        Stmt::If(IfStmt {
+            condition,
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
+        }),
+        tokens,
+    ))
 }
 
 fn var_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
@@ -301,7 +394,7 @@ fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
 }
 
 fn assignment(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
-    let (expr, tokens) = equality(tokens)?;
+    let (expr, tokens) = or(tokens)?;
 
     match peek(tokens) {
         Some(Token::Equal) => {
@@ -315,6 +408,34 @@ fn assignment(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
         }
         _ => Ok((expr, tokens)),
     }
+}
+
+fn or(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
+    let (mut left, mut tokens) = and(tokens)?;
+
+    while let Some(Token::Keyword(Keyword::Or)) = peek(tokens) {
+        let (_, leftover) = next(tokens)?;
+        let (right, leftover) = and(leftover)?;
+
+        left = Expr::or(left, right);
+        tokens = leftover;
+    }
+
+    Ok((left, tokens))
+}
+
+fn and(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
+    let (mut left, mut tokens) = equality(tokens)?;
+
+    while let Some(Token::Keyword(Keyword::And)) = peek(tokens) {
+        let (_, leftover) = next(tokens)?;
+        let (right, leftover) = equality(leftover)?;
+
+        left = Expr::and(left, right);
+        tokens = leftover;
+    }
+
+    Ok((left, tokens))
 }
 
 fn equality(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {

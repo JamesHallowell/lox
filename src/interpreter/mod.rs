@@ -2,8 +2,9 @@ use {
     crate::{
         lexer::{lex, Token},
         parser::{
-            self, parse, AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupExpr, LiteralExpr,
-            PrintStmt, Stmt, UnaryExpr, VarExpr, VarStmt, Visitor,
+            self, parse, AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupExpr, IfStmt,
+            LiteralExpr, LogicalExpr, LogicalOperator, PrintStmt, Stmt, UnaryExpr, VarExpr,
+            VarStmt, Visitor,
         },
     },
     std::collections::HashMap,
@@ -63,6 +64,7 @@ impl Visitor for Interpreter {
         match stmt {
             Stmt::Block(stmt) => self.visit_block_stmt(stmt),
             Stmt::Expr(stmt) => self.visit_expr_stmt(stmt),
+            Stmt::If(stmt) => self.visit_if_stmt(stmt),
             Stmt::Print(stmt) => self.visit_print_stmt(stmt),
             Stmt::Var(stmt) => self.visit_var_stmt(stmt),
         }
@@ -79,6 +81,16 @@ impl Visitor for Interpreter {
 
     fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), Self::Error> {
         let _value = self.visit_expr(stmt.expr())?;
+        Ok(())
+    }
+
+    fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<(), Self::Error> {
+        if self.visit_expr(stmt.condition())?.is_truthy() {
+            self.visit_stmt(stmt.then_branch())?;
+        } else if let Some(else_branch) = stmt.else_branch() {
+            self.visit_stmt(else_branch)?;
+        }
+
         Ok(())
     }
 
@@ -110,6 +122,7 @@ impl Visitor for Interpreter {
             Expr::Unary(expr) => self.visit_unary_expr(expr),
             Expr::Group(expr) => self.visit_group_expr(expr),
             Expr::Literal(expr) => self.visit_literal_expr(expr),
+            Expr::Logical(expr) => self.visit_logical_expr(expr),
             Expr::Var(expr) => self.visit_var_expr(expr),
         }
     }
@@ -162,6 +175,16 @@ impl Visitor for Interpreter {
             LiteralExpr::Nil => Ok(Value::Nil),
             LiteralExpr::Number(value) => Ok(Value::Number(*value)),
             LiteralExpr::String(value) => Ok(Value::String(value.clone())),
+        }
+    }
+
+    fn visit_logical_expr(&mut self, expr: &LogicalExpr) -> Result<Self::Output, Self::Error> {
+        let left = self.visit_expr(expr.left())?;
+
+        match expr.operator() {
+            LogicalOperator::And if !left.is_truthy() => Ok(left),
+            LogicalOperator::Or if left.is_truthy() => Ok(left),
+            _ => self.visit_expr(expr.right()),
         }
     }
 
