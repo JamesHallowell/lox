@@ -13,19 +13,40 @@ use {
 mod value;
 pub use value::Value;
 
-pub struct Interpreter {
+pub struct Interpreter<P> {
+    printer: P,
     environments: Vec<HashMap<String, Value>>,
 }
 
-impl Default for Interpreter {
+impl Default for Interpreter<StdOutPrinter> {
     fn default() -> Self {
-        Self {
-            environments: vec![HashMap::new()],
-        }
+        Self::with_printer(StdOutPrinter)
     }
 }
 
-impl Interpreter {
+pub trait Printer {
+    fn print(&mut self, value: Value);
+}
+
+pub struct StdOutPrinter;
+
+impl Printer for StdOutPrinter {
+    fn print(&mut self, value: Value) {
+        println!("{value}");
+    }
+}
+
+impl<P> Interpreter<P>
+where
+    P: Printer,
+{
+    pub fn with_printer(printer: P) -> Self {
+        Self {
+            printer,
+            environments: vec![HashMap::new()],
+        }
+    }
+
     pub fn interpret(&mut self, program: &str) -> Result<(), Error> {
         let tokens = lex(program);
         let stmts = parse(&tokens)?;
@@ -35,6 +56,10 @@ impl Interpreter {
         }
 
         Ok(())
+    }
+
+    fn into_printer(self) -> P {
+        self.printer
     }
 }
 
@@ -56,7 +81,10 @@ pub enum Error {
     UnexpectedBinaryOperator(Token),
 }
 
-impl Visitor for Interpreter {
+impl<P> Visitor for Interpreter<P>
+where
+    P: Printer,
+{
     type Output = Value;
     type Error = Error;
 
@@ -96,7 +124,7 @@ impl Visitor for Interpreter {
 
     fn visit_print_stmt(&mut self, stmt: &PrintStmt) -> Result<(), Self::Error> {
         let value = self.visit_expr(stmt.expr())?;
-        println!("{value}");
+        self.printer.print(value);
         Ok(())
     }
 
@@ -196,5 +224,117 @@ impl Visitor for Interpreter {
         }
 
         Err(Error::UndefinedVar(expr.ident().to_string()))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[derive(Default)]
+    struct SpyPrinter(Vec<Value>);
+
+    impl Printer for SpyPrinter {
+        fn print(&mut self, value: Value) {
+            self.0.push(value);
+        }
+    }
+
+    #[test]
+    fn if_statements() {
+        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+
+        let program = r#"
+        var x = 3;
+        if (x == 3) {
+            print 5;
+        } else {
+            print 4;
+        }
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let SpyPrinter(output) = interpreter.into_printer();
+
+        assert_eq!(output, vec![Value::Number(5.0)]);
+    }
+
+    #[test]
+    fn logical_expressions() {
+        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+
+        let program = r#"
+        print true and (1 == 1) and (2 + 2 == 4);
+        print true and (1 == 1) and (2 + 2 == 5);
+
+        print true or (1 == 2) or false;
+        print false or true;
+
+        print "hi" or 2;
+        print nil or "yes";
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let SpyPrinter(output) = interpreter.into_printer();
+
+        assert_eq!(
+            output,
+            vec![
+                Value::Boolean(true),
+                Value::Boolean(false),
+                Value::Boolean(true),
+                Value::Boolean(true),
+                Value::String("hi".to_string()),
+                Value::String("yes".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn scoping_variables() {
+        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+
+        let program = r#"
+        var a = "global a";
+        var b = "global b";
+        var c = "global c";
+        {
+          var a = "outer a";
+          var b = "outer b";
+          {
+            var a = "inner a";
+            print a;
+            print b;
+            print c;
+          }
+          print a;
+          print b;
+          print c;
+        }
+        print a;
+        print b;
+        print c;
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let SpyPrinter(output) = interpreter.into_printer();
+
+        assert_eq!(
+            output,
+            vec![
+                Value::String("inner a".to_string()),
+                Value::String("outer b".to_string()),
+                Value::String("global c".to_string()),
+                Value::String("outer a".to_string()),
+                Value::String("outer b".to_string()),
+                Value::String("global c".to_string()),
+                Value::String("global a".to_string()),
+                Value::String("global b".to_string()),
+                Value::String("global c".to_string()),
+            ]
+        );
     }
 }
