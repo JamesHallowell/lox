@@ -374,4 +374,54 @@ mod test {
             ]
         );
     }
+
+    #[test]
+    fn for_loop() {
+        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+
+        let program = "for (var i = 0; i != 5; i = i + 1) print i;";
+
+        interpreter.interpret(program).unwrap();
+
+        let SpyPrinter(output) = interpreter.into_printer();
+
+        assert_eq!(
+            output,
+            vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn for_loop_components_are_optional() {
+        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+
+        let program = r#"
+        var i = 0;
+        for (; i != 5;) {
+            print i;
+            i = i + 1;
+        }
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let SpyPrinter(output) = interpreter.into_printer();
+
+        assert_eq!(
+            output,
+            vec![
+                Value::Number(0.0),
+                Value::Number(1.0),
+                Value::Number(2.0),
+                Value::Number(3.0),
+                Value::Number(4.0),
+            ]
+        );
+    }
 }

@@ -13,6 +13,25 @@ pub enum Stmt {
     While(WhileStmt),
 }
 
+impl Stmt {
+    fn block(stmts: impl IntoIterator<Item = Stmt>) -> Self {
+        Self::Block(BlockStmt {
+            stmts: stmts.into_iter().collect(),
+        })
+    }
+
+    fn expr(expr: Expr) -> Self {
+        Self::Expr(ExprStmt { expr })
+    }
+
+    fn while_loop(condition: Expr, body: Stmt) -> Self {
+        Self::While(WhileStmt {
+            condition,
+            body: Box::new(body),
+        })
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct BlockStmt {
     stmts: Vec<Stmt>,
@@ -111,14 +130,14 @@ pub enum Expr {
 }
 
 impl Expr {
-    fn assign(ident: String, value: Expr) -> Expr {
+    fn assign(ident: String, value: Expr) -> Self {
         Expr::Assign(AssignExpr {
             ident,
             value: Box::new(value),
         })
     }
 
-    fn binary(left: Expr, operator: Token, right: Expr) -> Expr {
+    fn binary(left: Expr, operator: Token, right: Expr) -> Self {
         Expr::Binary(BinaryExpr {
             left: Box::new(left),
             operator,
@@ -126,20 +145,20 @@ impl Expr {
         })
     }
 
-    fn unary(operator: Token, right: Expr) -> Expr {
+    fn unary(operator: Token, right: Expr) -> Self {
         Expr::Unary(UnaryExpr {
             operator,
             right: Box::new(right),
         })
     }
 
-    fn group(expr: Expr) -> Expr {
+    fn group(expr: Expr) -> Self {
         Expr::Group(GroupExpr {
             expr: Box::new(expr),
         })
     }
 
-    fn and(left: Expr, right: Expr) -> Expr {
+    fn and(left: Expr, right: Expr) -> Self {
         Expr::Logical(LogicalExpr {
             left: Box::new(left),
             operator: LogicalOperator::And,
@@ -147,7 +166,7 @@ impl Expr {
         })
     }
 
-    fn or(left: Expr, right: Expr) -> Expr {
+    fn or(left: Expr, right: Expr) -> Self {
         Expr::Logical(LogicalExpr {
             left: Box::new(left),
             operator: LogicalOperator::Or,
@@ -322,25 +341,26 @@ fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
         Some(Token::Keyword(Keyword::Var)) => var_statement(tokens),
         Some(Token::Keyword(Keyword::Print)) => print_statement(tokens),
         Some(Token::Keyword(Keyword::While)) => while_statement(tokens),
+        Some(Token::Keyword(Keyword::For)) => for_statement(tokens),
         _ => expression_statement(tokens),
     }
 }
 
 fn block_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
-    let mut block = BlockStmt { stmts: vec![] };
+    let mut stmts = vec![];
 
     let (_, mut tokens) = next_exact(Token::LeftBrace)(tokens)?;
 
     while !matches!(peek(tokens), Some(Token::RightBrace)) {
         let (stmt, remaining_tokens) = statement(tokens)?;
 
-        block.stmts.push(stmt);
+        stmts.push(stmt);
         tokens = remaining_tokens;
     }
 
     let (_, tokens) = next_exact(Token::RightBrace)(tokens)?;
 
-    Ok((Stmt::Block(block), tokens))
+    Ok((Stmt::block(stmts), tokens))
 }
 
 fn if_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
@@ -416,6 +436,64 @@ fn while_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
     };
 
     Ok((Stmt::While(stmt), tokens))
+}
+
+fn for_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
+    let (_, tokens) = next_exact(Token::Keyword(Keyword::For))(tokens)?;
+    let (_, tokens) = next_exact(Token::LeftParen)(tokens)?;
+    let (init, tokens) = for_statement_init(tokens)?;
+    let (condition, tokens) = for_statement_condition(tokens)?;
+    let (expr, tokens) = for_statement_expression(tokens)?;
+    let (_, tokens) = next_exact(Token::RightParen)(tokens)?;
+    let (body, tokens) = statement(tokens)?;
+
+    let condition = condition.unwrap_or(Expr::from(true));
+    let body = Stmt::block([Some(body), expr.map(Stmt::expr)].into_iter().flatten());
+    let while_loop = Stmt::while_loop(condition, body);
+    let for_loop = Stmt::block([init, Some(while_loop)].into_iter().flatten());
+
+    Ok((for_loop, tokens))
+}
+
+fn for_statement_init(tokens: &[Token]) -> Result<(Option<Stmt>, &[Token]), Error> {
+    Ok(match peek(tokens) {
+        Some(Token::Semicolon) => {
+            let (_, tokens) = next(tokens)?;
+            (None, tokens)
+        }
+        Some(Token::Keyword(Keyword::Var)) => {
+            let (stmt, tokens) = var_statement(tokens)?;
+            (Some(stmt), tokens)
+        }
+        _ => {
+            let (stmt, tokens) = expression_statement(tokens)?;
+            (Some(stmt), tokens)
+        }
+    })
+}
+
+fn for_statement_condition(tokens: &[Token]) -> Result<(Option<Expr>, &[Token]), Error> {
+    Ok(match peek(tokens) {
+        Some(Token::Semicolon) => {
+            let (_, tokens) = next(tokens)?;
+            (None, tokens)
+        }
+        _ => {
+            let (expr, tokens) = expression(tokens)?;
+            let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
+            (Some(expr), tokens)
+        }
+    })
+}
+
+fn for_statement_expression(tokens: &[Token]) -> Result<(Option<Expr>, &[Token]), Error> {
+    Ok(match peek(tokens) {
+        Some(Token::RightParen) => (None, tokens),
+        _ => {
+            let (expr, tokens) = expression(tokens)?;
+            (Some(expr), tokens)
+        }
+    })
 }
 
 fn expression_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
