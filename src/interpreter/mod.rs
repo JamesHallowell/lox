@@ -51,6 +51,7 @@ impl Interpreter {
         global_scope.define("clock", Clock);
         global_scope.define("sleep", Sleep);
         global_scope.define("print", Print(printer));
+        global_scope.define("assert", Assert);
 
         interpreter
     }
@@ -321,6 +322,27 @@ where
     }
 }
 
+struct Assert;
+
+impl Function for Assert {
+    fn arity(&self) -> Option<usize> {
+        None
+    }
+
+    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+        for arg in args {
+            assert!(arg.is_truthy());
+        }
+        Ok(Value::Nil)
+    }
+}
+
+impl From<Assert> for Value {
+    fn from(assert: Assert) -> Self {
+        Value::function(assert)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use {
@@ -365,6 +387,18 @@ mod test {
     }
 
     #[test]
+    fn string_equality() {
+        let mut interpreter = Interpreter::default();
+
+        let program = r#"
+        assert ("hello" == "hello");
+        assert ("hello" != "world");
+        "#;
+
+        interpreter.interpret(program).unwrap();
+    }
+
+    #[test]
     fn logical_expressions() {
         let spy_printer = SpyPrinter::default();
         let mut interpreter = Interpreter::with_printer(spy_printer.clone());
@@ -399,8 +433,7 @@ mod test {
 
     #[test]
     fn scoping_variables() {
-        let spy_printer = SpyPrinter::default();
-        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
+        let mut interpreter = Interpreter::default();
 
         let program = r#"
         var a = "global a";
@@ -411,60 +444,30 @@ mod test {
           var b = "outer b";
           {
             var a = "inner a";
-            print(a, b, c);
+            assert(a == "inner a", b == "outer b", c == "global c");
           }
-          print(a, b, c);
+          assert(a == "outer a", b == "outer b", c == "global c");
         }
-        print(a, b, c);
+        assert(a == "global a", b == "global b", c == "global c");
         "#;
 
         interpreter.interpret(program).unwrap();
-
-        let output = spy_printer.into_inner();
-
-        assert_eq!(
-            output,
-            vec![
-                Value::String("inner a".to_string()),
-                Value::String("outer b".to_string()),
-                Value::String("global c".to_string()),
-                Value::String("outer a".to_string()),
-                Value::String("outer b".to_string()),
-                Value::String("global c".to_string()),
-                Value::String("global a".to_string()),
-                Value::String("global b".to_string()),
-                Value::String("global c".to_string()),
-            ]
-        );
     }
 
     #[test]
     fn while_loop() {
-        let spy_printer = SpyPrinter::default();
-        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
+        let mut interpreter = Interpreter::default();
 
         let program = r#"
         var i = 0;
         while (i != 5) {
-            print(i);
+            assert (i < 5);
             i = i + 1;
         }
+        assert(i == 5);
         "#;
 
         interpreter.interpret(program).unwrap();
-
-        let output = spy_printer.into_inner();
-
-        assert_eq!(
-            output,
-            vec![
-                Value::Number(0.0),
-                Value::Number(1.0),
-                Value::Number(2.0),
-                Value::Number(3.0),
-                Value::Number(4.0),
-            ]
-        );
     }
 
     #[test]
@@ -492,50 +495,31 @@ mod test {
 
     #[test]
     fn for_loop_components_are_optional() {
-        let spy_printer = SpyPrinter::default();
-        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
+        let mut interpreter = Interpreter::default();
 
         let program = r#"
         var i = 0;
         for (; i != 5;) {
-            print(i);
             i = i + 1;
         }
+        assert(i == 5);
         "#;
 
         interpreter.interpret(program).unwrap();
-
-        let output = spy_printer.into_inner();
-
-        assert_eq!(
-            output,
-            vec![
-                Value::Number(0.0),
-                Value::Number(1.0),
-                Value::Number(2.0),
-                Value::Number(3.0),
-                Value::Number(4.0),
-            ]
-        );
     }
 
     #[test]
     fn call_function() {
-        let spy_printer = SpyPrinter::default();
-        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
+        let mut interpreter = Interpreter::default();
 
         let program = r#"
         var start = clock();
         sleep(10);
         var stop = clock();
-        print(stop > start);
+        assert(stop > start);
         "#;
 
         interpreter.interpret(program).unwrap();
-
-        let output = spy_printer.into_inner();
-
-        assert_eq!(output, vec![Value::Boolean(true)]);
     }
 
     #[test]
@@ -590,5 +574,28 @@ mod test {
                 Value::Nil
             ]
         );
+    }
+
+    #[test]
+    fn assertion_pass_does_not_panic() {
+        let mut interpreter = Interpreter::default();
+
+        let program = r#"
+        assert(2 + 2 == 4);
+        "#;
+
+        interpreter.interpret(program).unwrap();
+    }
+
+    #[test]
+    #[should_panic]
+    fn assertion_failure_will_panic() {
+        let mut interpreter = Interpreter::default();
+
+        let program = r#"
+        assert(2 + 2 == 5);
+        "#;
+
+        interpreter.interpret(program).unwrap();
     }
 }
