@@ -2,49 +2,57 @@ use {
     crate::{
         lexer::{lex, Token},
         parser::{
-            self, parse, AssignExpr, BinaryExpr, BlockStmt, Expr, ExprStmt, GroupExpr, IfStmt,
-            LiteralExpr, LogicalExpr, LogicalOperator, PrintStmt, Stmt, UnaryExpr, VarExpr,
-            VarStmt, Visitor, WhileStmt,
+            parse, AssignExpr, BinaryExpr, BlockStmt, CallableExpr, Error as ParserError, Expr,
+            ExprStmt, GroupExpr, IfStmt, LiteralExpr, LogicalExpr, LogicalOperator, Stmt,
+            UnaryExpr, VarExpr, VarStmt, Visitor, WhileStmt,
         },
     },
-    std::collections::HashMap,
+    std::{
+        thread::sleep,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    },
 };
 
 mod value;
-pub use value::Value;
+pub use value::{CallError, Error as ValueError, Function, Value};
 
-pub struct Interpreter<P> {
-    printer: P,
-    environments: Vec<HashMap<String, Value>>,
+mod env;
+use env::Environment;
+
+pub struct Interpreter {
+    environment: Environment,
 }
 
-impl Default for Interpreter<StdOutPrinter> {
+impl Default for Interpreter {
     fn default() -> Self {
         Self::with_printer(StdOutPrinter)
     }
 }
 
 pub trait Printer {
-    fn print(&mut self, value: Value);
+    fn print(&mut self, value: &Value);
 }
 
 pub struct StdOutPrinter;
 
 impl Printer for StdOutPrinter {
-    fn print(&mut self, value: Value) {
+    fn print(&mut self, value: &Value) {
         println!("{value}");
     }
 }
 
-impl<P> Interpreter<P>
-where
-    P: Printer,
-{
-    pub fn with_printer(printer: P) -> Self {
-        Self {
-            printer,
-            environments: vec![HashMap::new()],
-        }
+impl Interpreter {
+    pub fn with_printer(printer: impl Printer + 'static) -> Self {
+        let mut interpreter = Self {
+            environment: Environment::default(),
+        };
+
+        let global_scope = interpreter.environment.global_scope();
+        global_scope.define("clock", Clock);
+        global_scope.define("sleep", Sleep);
+        global_scope.define("print", Print(printer));
+
+        interpreter
     }
 
     pub fn interpret(&mut self, program: &str) -> Result<(), Error> {
@@ -57,19 +65,15 @@ where
 
         Ok(())
     }
-
-    fn into_printer(self) -> P {
-        self.printer
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Parser(#[from] parser::Error),
+    Parser(#[from] ParserError),
 
     #[error(transparent)]
-    Value(#[from] value::Error),
+    Value(#[from] ValueError),
 
     #[error("undefined variable {0}")]
     UndefinedVar(String),
@@ -81,10 +85,7 @@ pub enum Error {
     UnexpectedBinaryOperator(Token),
 }
 
-impl<P> Visitor for Interpreter<P>
-where
-    P: Printer,
-{
+impl Visitor for Interpreter {
     type Output = Value;
     type Error = Error;
 
@@ -93,18 +94,17 @@ where
             Stmt::Block(stmt) => self.visit_block_stmt(stmt),
             Stmt::Expr(stmt) => self.visit_expr_stmt(stmt),
             Stmt::If(stmt) => self.visit_if_stmt(stmt),
-            Stmt::Print(stmt) => self.visit_print_stmt(stmt),
             Stmt::Var(stmt) => self.visit_var_stmt(stmt),
             Stmt::While(stmt) => self.visit_while_stmt(stmt),
         }
     }
 
     fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<(), Self::Error> {
-        self.environments.push(HashMap::default());
+        self.environment.push_scope();
         for stmt in stmt.stmts() {
             self.visit_stmt(stmt)?;
         }
-        self.environments.pop();
+        self.environment.pop_scope();
         Ok(())
     }
 
@@ -123,12 +123,6 @@ where
         Ok(())
     }
 
-    fn visit_print_stmt(&mut self, stmt: &PrintStmt) -> Result<(), Self::Error> {
-        let value = self.visit_expr(stmt.expr())?;
-        self.printer.print(value);
-        Ok(())
-    }
-
     fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<(), Self::Error> {
         let init_value = if let Some(expr) = stmt.init() {
             self.visit_expr(expr)?
@@ -136,10 +130,9 @@ where
             Value::Nil
         };
 
-        self.environments
-            .last_mut()
-            .expect("at least one environment")
-            .insert(stmt.ident().to_string(), init_value);
+        self.environment
+            .current_scope()
+            .define(stmt.ident(), init_value);
 
         Ok(())
     }
@@ -156,6 +149,7 @@ where
         match expr {
             Expr::Assign(expr) => self.visit_assign_expr(expr),
             Expr::Binary(expr) => self.visit_binary_expr(expr),
+            Expr::Callable(expr) => self.visit_callable_expr(expr),
             Expr::Unary(expr) => self.visit_unary_expr(expr),
             Expr::Group(expr) => self.visit_group_expr(expr),
             Expr::Literal(expr) => self.visit_literal_expr(expr),
@@ -167,10 +161,10 @@ where
     fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<Self::Output, Self::Error> {
         let value = self.visit_expr(expr.value())?;
 
-        for environment in self.environments.iter_mut().rev() {
-            if environment.contains_key(expr.ident()) {
-                environment.insert(expr.ident().to_string(), value.clone());
-                return Ok(value);
+        for scope in self.environment.scopes_mut() {
+            if let Some(var) = scope.get_mut(expr.ident()) {
+                *var = value;
+                return Ok(var.clone());
             }
         }
 
@@ -188,8 +182,23 @@ where
             Token::Slash => Ok((lhs / rhs)?),
             Token::EqualEqual => Ok(Value::Boolean(lhs == rhs)),
             Token::BangEqual => Ok(Value::Boolean(lhs != rhs)),
+            Token::Less => Ok(Value::Boolean(lhs < rhs)),
+            Token::LessEqual => Ok(Value::Boolean(lhs <= rhs)),
+            Token::Greater => Ok(Value::Boolean(lhs > rhs)),
+            Token::GreaterEqual => Ok(Value::Boolean(lhs >= rhs)),
             token => Err(Error::UnexpectedBinaryOperator(token.clone())),
         }
+    }
+
+    fn visit_callable_expr(&mut self, expr: &CallableExpr) -> Result<Self::Output, Self::Error> {
+        let mut callee = self.visit_expr(expr.callee())?;
+
+        let args = expr
+            .args()
+            .map(|arg| self.visit_expr(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(callee.call(args).map_err(value::Error::from)?)
     }
 
     fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Result<Self::Output, Self::Error> {
@@ -226,9 +235,9 @@ where
     }
 
     fn visit_var_expr(&mut self, expr: &VarExpr) -> Result<Self::Output, Self::Error> {
-        for environment in self.environments.iter().rev() {
-            if let Some(value) = environment.get(expr.ident()) {
-                return Ok(value.clone());
+        for scope in self.environment.scopes() {
+            if let Some(var) = scope.get(expr.ident()) {
+                return Ok(var.clone());
             }
         }
 
@@ -236,57 +245,144 @@ where
     }
 }
 
+struct Clock;
+
+impl Function for Clock {
+    fn arity(&self) -> Option<usize> {
+        Some(0)
+    }
+
+    fn call(&mut self, _args: Vec<Value>) -> Result<Value, CallError> {
+        Ok(Value::Number(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs_f64(),
+        ))
+    }
+}
+
+impl From<Clock> for Value {
+    fn from(clock: Clock) -> Value {
+        Value::function(clock)
+    }
+}
+
+struct Sleep;
+
+impl Function for Sleep {
+    fn arity(&self) -> Option<usize> {
+        Some(1)
+    }
+
+    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+        let duration_to_sleep = if let Some(Value::Number(milliseconds)) = args.first() {
+            Duration::from_millis(milliseconds.round() as u64)
+        } else {
+            return Err(CallError::WrongArgType);
+        };
+
+        sleep(duration_to_sleep);
+
+        Ok(Value::Nil)
+    }
+}
+
+impl From<Sleep> for Value {
+    fn from(sleep: Sleep) -> Self {
+        Value::function(sleep)
+    }
+}
+
+struct Print<P>(P);
+
+impl<P> Function for Print<P>
+where
+    P: Printer,
+{
+    fn arity(&self) -> Option<usize> {
+        None
+    }
+
+    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+        for arg in args {
+            self.0.print(&arg);
+        }
+        Ok(Value::Nil)
+    }
+}
+
+impl<P> From<Print<P>> for Value
+where
+    P: Printer + 'static,
+{
+    fn from(print: Print<P>) -> Self {
+        Value::function(print)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::*;
+    use {
+        super::*,
+        std::{cell::RefCell, rc::Rc},
+    };
 
-    #[derive(Default)]
-    struct SpyPrinter(Vec<Value>);
+    #[derive(Default, Clone)]
+    struct SpyPrinter(Rc<RefCell<Vec<Value>>>);
 
     impl Printer for SpyPrinter {
-        fn print(&mut self, value: Value) {
-            self.0.push(value);
+        fn print(&mut self, value: &Value) {
+            self.0.borrow_mut().push(value.clone());
+        }
+    }
+
+    impl SpyPrinter {
+        fn into_inner(self) -> Vec<Value> {
+            self.0.borrow().clone()
         }
     }
 
     #[test]
     fn if_statements() {
-        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
 
         let program = r#"
         var x = 3;
         if (x == 3) {
-            print 5;
+            print(5);
         } else {
-            print 4;
+            print(4);
         }
         "#;
 
         interpreter.interpret(program).unwrap();
 
-        let SpyPrinter(output) = interpreter.into_printer();
+        let output = spy_printer.into_inner();
 
         assert_eq!(output, vec![Value::Number(5.0)]);
     }
 
     #[test]
     fn logical_expressions() {
-        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
 
         let program = r#"
-        print true and (1 == 1) and (2 + 2 == 4);
-        print true and (1 == 1) and (2 + 2 == 5);
+        print(true and (1 == 1) and (2 + 2 == 4));
+        print(true and (1 == 1) and (2 + 2 == 5));
 
-        print true or (1 == 2) or false;
-        print false or true;
+        print(true or (1 == 2) or false);
+        print(false or true);
 
-        print "hi" or 2;
-        print nil or "yes";
+        print("hi" or 2);
+        print(nil or "yes");
         "#;
 
         interpreter.interpret(program).unwrap();
 
-        let SpyPrinter(output) = interpreter.into_printer();
+        let output = spy_printer.into_inner();
 
         assert_eq!(
             output,
@@ -303,7 +399,8 @@ mod test {
 
     #[test]
     fn scoping_variables() {
-        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
 
         let program = r#"
         var a = "global a";
@@ -314,22 +411,16 @@ mod test {
           var b = "outer b";
           {
             var a = "inner a";
-            print a;
-            print b;
-            print c;
+            print(a, b, c);
           }
-          print a;
-          print b;
-          print c;
+          print(a, b, c);
         }
-        print a;
-        print b;
-        print c;
+        print(a, b, c);
         "#;
 
         interpreter.interpret(program).unwrap();
 
-        let SpyPrinter(output) = interpreter.into_printer();
+        let output = spy_printer.into_inner();
 
         assert_eq!(
             output,
@@ -349,19 +440,20 @@ mod test {
 
     #[test]
     fn while_loop() {
-        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
 
         let program = r#"
         var i = 0;
         while (i != 5) {
-            print i;
+            print(i);
             i = i + 1;
         }
         "#;
 
         interpreter.interpret(program).unwrap();
 
-        let SpyPrinter(output) = interpreter.into_printer();
+        let output = spy_printer.into_inner();
 
         assert_eq!(
             output,
@@ -377,13 +469,14 @@ mod test {
 
     #[test]
     fn for_loop() {
-        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
 
-        let program = "for (var i = 0; i != 5; i = i + 1) print i;";
+        let program = "for (var i = 0; i != 5; i = i + 1) print(i);";
 
         interpreter.interpret(program).unwrap();
 
-        let SpyPrinter(output) = interpreter.into_printer();
+        let output = spy_printer.into_inner();
 
         assert_eq!(
             output,
@@ -399,19 +492,20 @@ mod test {
 
     #[test]
     fn for_loop_components_are_optional() {
-        let mut interpreter = Interpreter::with_printer(SpyPrinter::default());
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
 
         let program = r#"
         var i = 0;
         for (; i != 5;) {
-            print i;
+            print(i);
             i = i + 1;
         }
         "#;
 
         interpreter.interpret(program).unwrap();
 
-        let SpyPrinter(output) = interpreter.into_printer();
+        let output = spy_printer.into_inner();
 
         assert_eq!(
             output,
@@ -421,6 +515,79 @@ mod test {
                 Value::Number(2.0),
                 Value::Number(3.0),
                 Value::Number(4.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn call_function() {
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
+
+        let program = r#"
+        var start = clock();
+        sleep(10);
+        var stop = clock();
+        print(stop > start);
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let output = spy_printer.into_inner();
+
+        assert_eq!(output, vec![Value::Boolean(true)]);
+    }
+
+    #[test]
+    fn call_function_with_wrong_number_of_args() {
+        let mut interpreter = Interpreter::default();
+
+        let result = interpreter.interpret("sleep(1, 2, 3);");
+
+        assert!(matches!(
+            result,
+            Err(Error::Value(ValueError::CallError(
+                CallError::ArityMismatch {
+                    expected: 1,
+                    actual: 3
+                }
+            )))
+        ));
+    }
+
+    #[test]
+    fn call_uncallable_type() {
+        let mut interpreter = Interpreter::default();
+
+        let program = r#""hello"(1, 2, 3);"#;
+
+        let result = interpreter.interpret(program);
+        assert!(matches!(
+            result,
+            Err(Error::Value(ValueError::CallError(CallError::NotCallable)))
+        ));
+    }
+
+    #[test]
+    fn print_function_variadic_number_of_args() {
+        let spy_printer = SpyPrinter::default();
+        let mut interpreter = Interpreter::with_printer(spy_printer.clone());
+
+        let program = r#"
+        print(1, true, "hello", nil);
+        "#;
+
+        interpreter.interpret(program).unwrap();
+
+        let output = spy_printer.into_inner();
+
+        assert_eq!(
+            output,
+            vec![
+                Value::Number(1.0),
+                Value::Boolean(true),
+                Value::String("hello".to_string()),
+                Value::Nil
             ]
         );
     }

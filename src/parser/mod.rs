@@ -8,7 +8,6 @@ pub enum Stmt {
     Block(BlockStmt),
     Expr(ExprStmt),
     If(IfStmt),
-    Print(PrintStmt),
     Var(VarStmt),
     While(WhileStmt),
 }
@@ -22,6 +21,18 @@ impl Stmt {
 
     fn expr(expr: Expr) -> Self {
         Self::Expr(ExprStmt { expr })
+    }
+
+    fn if_then_else(condition: Expr, then_branch: Stmt, else_branch: Option<Stmt>) -> Self {
+        Self::If(IfStmt {
+            condition,
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(Box::new),
+        })
+    }
+
+    fn var(ident: String, init: Option<Expr>) -> Self {
+        Self::Var(VarStmt { ident, init })
     }
 
     fn while_loop(condition: Expr, body: Stmt) -> Self {
@@ -76,17 +87,6 @@ impl IfStmt {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct PrintStmt {
-    expr: Expr,
-}
-
-impl PrintStmt {
-    pub fn expr(&self) -> &Expr {
-        &self.expr
-    }
-}
-
-#[derive(Debug, PartialEq)]
 pub struct VarStmt {
     ident: String,
     init: Option<Expr>,
@@ -122,6 +122,7 @@ impl WhileStmt {
 pub enum Expr {
     Assign(AssignExpr),
     Binary(BinaryExpr),
+    Callable(CallableExpr),
     Group(GroupExpr),
     Literal(LiteralExpr),
     Logical(LogicalExpr),
@@ -143,6 +144,17 @@ impl Expr {
             operator,
             right: Box::new(right),
         })
+    }
+
+    fn callable(callee: Expr, args: impl IntoIterator<Item = Expr>) -> Self {
+        Expr::Callable(CallableExpr {
+            callee: Box::new(callee),
+            args: args.into_iter().collect(),
+        })
+    }
+
+    fn var(ident: String) -> Self {
+        Expr::Var(VarExpr { ident })
     }
 
     fn unary(operator: Token, right: Expr) -> Self {
@@ -225,6 +237,22 @@ impl UnaryExpr {
 
     pub fn right(&self) -> &Expr {
         &self.right
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct CallableExpr {
+    callee: Box<Expr>,
+    args: Vec<Expr>,
+}
+
+impl CallableExpr {
+    pub fn callee(&self) -> &Expr {
+        self.callee.as_ref()
+    }
+
+    pub fn args(&self) -> impl Iterator<Item = &Expr> {
+        self.args.iter()
     }
 }
 
@@ -339,7 +367,6 @@ fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
         Some(Token::LeftBrace) => block_statement(tokens),
         Some(Token::Keyword(Keyword::If)) => if_statement(tokens),
         Some(Token::Keyword(Keyword::Var)) => var_statement(tokens),
-        Some(Token::Keyword(Keyword::Print)) => print_statement(tokens),
         Some(Token::Keyword(Keyword::While)) => while_statement(tokens),
         Some(Token::Keyword(Keyword::For)) => for_statement(tokens),
         _ => expression_statement(tokens),
@@ -380,11 +407,7 @@ fn if_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
     };
 
     Ok((
-        Stmt::If(IfStmt {
-            condition,
-            then_branch: Box::new(then_branch),
-            else_branch: else_branch.map(Box::new),
-        }),
+        Stmt::if_then_else(condition, then_branch, else_branch),
         tokens,
     ))
 }
@@ -409,16 +432,7 @@ fn var_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
 
     let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
 
-    let stmt = Stmt::Var(VarStmt { ident, init });
-
-    Ok((stmt, tokens))
-}
-
-fn print_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
-    let (_, tokens) = next_exact(Token::Keyword(Keyword::Print))(tokens)?;
-    let (expr, tokens) = expression(tokens)?;
-    let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
-    Ok((Stmt::Print(PrintStmt { expr }), tokens))
+    Ok((Stmt::var(ident, init), tokens))
 }
 
 fn while_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
@@ -430,12 +444,7 @@ fn while_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
 
     let (body, tokens) = statement(tokens)?;
 
-    let stmt = WhileStmt {
-        condition,
-        body: Box::new(body),
-    };
-
-    Ok((Stmt::While(stmt), tokens))
+    Ok((Stmt::while_loop(condition, body), tokens))
 }
 
 fn for_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
@@ -499,7 +508,7 @@ fn for_statement_expression(tokens: &[Token]) -> Result<(Option<Expr>, &[Token])
 fn expression_statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), Error> {
     let (expr, tokens) = expression(tokens)?;
     let (_, tokens) = next_exact(Token::Semicolon)(tokens)?;
-    Ok((Stmt::Expr(ExprStmt { expr }), tokens))
+    Ok((Stmt::expr(expr), tokens))
 }
 
 fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
@@ -614,8 +623,48 @@ fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
             let (expr, tokens) = unary(tokens)?;
             Ok((Expr::unary(operator.clone(), expr), tokens))
         }
-        _ => primary(tokens),
+        _ => call(tokens),
     }
+}
+
+fn call(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
+    let (mut expr, mut tokens) = primary(tokens)?;
+
+    while let Some(Token::LeftParen) = peek(tokens) {
+        let (args, leftover) = call_args(tokens)?;
+        expr = Expr::callable(expr, args);
+        tokens = leftover;
+    }
+
+    Ok((expr, tokens))
+}
+
+fn call_args(tokens: &[Token]) -> Result<(Vec<Expr>, &[Token]), Error> {
+    let (_, mut tokens) = next_exact(Token::LeftParen)(tokens)?;
+
+    if let Some((Token::RightParen, tokens)) = next_if(Token::RightParen)(tokens)? {
+        return Ok((vec![], tokens));
+    }
+
+    let mut args = vec![];
+    loop {
+        let (expr, leftover) = expression(tokens)?;
+        args.push(expr);
+
+        match next_if(Token::Comma)(leftover)? {
+            Some((_, leftover)) => {
+                tokens = leftover;
+            }
+            None => {
+                tokens = leftover;
+                break;
+            }
+        }
+    }
+
+    let (_, tokens) = next_exact(Token::RightParen)(tokens)?;
+
+    Ok((args, tokens))
 }
 
 fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
@@ -633,12 +682,9 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), Error> {
         (Token::Literal(Literal::String(string)), tokens) => {
             Ok((Expr::from(string.as_str()), tokens))
         }
-        (Token::Literal(Literal::Identifier(ident)), tokens) => Ok((
-            Expr::Var(VarExpr {
-                ident: ident.clone(),
-            }),
-            tokens,
-        )),
+        (Token::Literal(Literal::Identifier(ident)), tokens) => {
+            Ok((Expr::var(ident.clone()), tokens))
+        }
         (token, _) => Err(Error::UnexpectedToken(token.clone())),
     }
 }
@@ -681,12 +727,7 @@ mod test {
         let tokens = lex("\"Hello, world!\";");
         let statements = parse(&tokens).unwrap();
 
-        assert_eq!(
-            statements,
-            vec![Stmt::Expr(ExprStmt {
-                expr: Expr::from("Hello, world!")
-            })]
-        );
+        assert_eq!(statements, vec![Stmt::expr(Expr::from("Hello, world!"))]);
     }
 
     #[test]
@@ -696,9 +737,7 @@ mod test {
 
         assert_eq!(
             statements,
-            vec![Stmt::Expr(ExprStmt {
-                expr: Expr::unary(Token::Bang, Expr::from(true))
-            })]
+            vec![Stmt::expr(Expr::unary(Token::Bang, Expr::from(true)))]
         );
     }
 
@@ -709,17 +748,46 @@ mod test {
 
         assert_eq!(
             statements,
-            vec![Stmt::Expr(ExprStmt {
-                expr: Expr::binary(
-                    Expr::binary(Expr::from(1), Token::Plus, Expr::from(2)),
-                    Token::Minus,
-                    Expr::binary(
-                        Expr::binary(Expr::from(3), Token::Star, Expr::from(4)),
-                        Token::Slash,
-                        Expr::from(5)
-                    )
+            vec![Stmt::expr(Expr::binary(
+                Expr::binary(Expr::from(1), Token::Plus, Expr::from(2)),
+                Token::Minus,
+                Expr::binary(
+                    Expr::binary(Expr::from(3), Token::Star, Expr::from(4)),
+                    Token::Slash,
+                    Expr::from(5)
                 )
-            })]
+            ))]
+        );
+    }
+
+    #[test]
+    fn parse_callable() {
+        let program = r#"
+        foo();
+        foo(5, true);
+        foo(5, true, "hello", nil);
+        "#;
+        let tokens = lex(program);
+        let statements = parse(&tokens).unwrap();
+
+        assert_eq!(
+            statements,
+            vec![
+                Stmt::expr(Expr::callable(Expr::var("foo".to_string()), vec![])),
+                Stmt::expr(Expr::callable(
+                    Expr::var("foo".to_string()),
+                    [Expr::from(5), Expr::from(true)]
+                )),
+                Stmt::expr(Expr::callable(
+                    Expr::var("foo".to_string()),
+                    [
+                        Expr::from(5),
+                        Expr::from(true),
+                        Expr::from("hello"),
+                        Expr::Literal(LiteralExpr::Nil),
+                    ]
+                ))
+            ]
         );
     }
 }
