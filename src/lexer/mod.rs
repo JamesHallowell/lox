@@ -1,5 +1,5 @@
-#[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum Token<'input> {
     LeftParen,
     RightParen,
     LeftBrace,
@@ -19,18 +19,24 @@ pub enum Token {
     GreaterEqual,
     Less,
     LessEqual,
-    Literal(Literal),
+    Literal(Literal<'input>),
     Keyword(Keyword),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Literal {
-    Identifier(String),
-    String(String),
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum Literal<'input> {
+    Identifier(&'input str),
+    String(&'input str),
     Number(f64),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl<'a> From<&'a str> for Token<'a> {
+    fn from(value: &'a str) -> Self {
+        Self::Literal(Literal::String(value))
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Keyword {
     And,
     Class,
@@ -49,11 +55,21 @@ pub enum Keyword {
     While,
 }
 
+impl From<Keyword> for Token<'_> {
+    fn from(keyword: Keyword) -> Self {
+        Self::Keyword(keyword)
+    }
+}
+
+fn char_equals(needle: char) -> impl FnOnce(&(usize, char)) -> bool {
+    move |&(_, found)| found == needle
+}
+
 pub fn lex(input: &str) -> Vec<Token> {
-    let mut chars = input.chars().peekable();
+    let mut chars = input.char_indices().peekable();
     let mut tokens = vec![];
 
-    while let Some(char) = chars.next() {
+    while let Some((i, char)) = chars.next() {
         let token = match char {
             '(' => Some(Token::LeftParen),
             ')' => Some(Token::RightParen),
@@ -65,40 +81,38 @@ pub fn lex(input: &str) -> Vec<Token> {
             '+' => Some(Token::Plus),
             ';' => Some(Token::Semicolon),
             '*' => Some(Token::Star),
-            '!' => match chars.next_if_eq(&'=') {
+            '!' => match chars.next_if(char_equals('=')) {
                 Some(_) => Some(Token::BangEqual),
                 None => Some(Token::Bang),
             },
-            '=' => match chars.next_if_eq(&'=') {
+            '=' => match chars.next_if(char_equals('=')) {
                 Some(_) => Some(Token::EqualEqual),
                 None => Some(Token::Equal),
             },
-            '<' => match chars.next_if_eq(&'=') {
+            '<' => match chars.next_if(char_equals('=')) {
                 Some(_) => Some(Token::LessEqual),
                 None => Some(Token::Less),
             },
-            '>' => match chars.next_if_eq(&'=') {
+            '>' => match chars.next_if(char_equals('=')) {
                 Some(_) => Some(Token::GreaterEqual),
                 None => Some(Token::Greater),
             },
-            '/' => match chars.next_if_eq(&'/') {
+            '/' => match chars.next_if(char_equals('/')) {
                 Some(_) => {
-                    while chars.next_if(|&char| char != '\n').is_some() {}
+                    while chars.next_if(|&(_, char)| char != '\n').is_some() {}
                     None
                 }
                 None => Some(Token::Slash),
             },
             '"' => {
-                let mut value = String::new();
+                let start = i + char.len_utf8();
                 loop {
                     match chars.next() {
-                        Some('"') => break Some(Token::Literal(Literal::String(value))),
-                        Some('\n') => {
-                            // multi-line string
+                        Some((end, '"')) => {
+                            let string = &input[start..end];
+                            break Some(Token::Literal(Literal::String(string)));
                         }
-                        Some(char) => {
-                            value.push(char);
-                        }
+                        Some(_) => {}
                         None => {
                             break None;
                         }
@@ -108,20 +122,20 @@ pub fn lex(input: &str) -> Vec<Token> {
             char if char.is_numeric() => {
                 let mut value = String::from(char);
 
-                while let Some(char) = chars.next_if(|char| char.is_numeric()) {
+                while let Some((_, char)) = chars.next_if(|(_, char)| char.is_numeric()) {
                     value.push(char);
                 }
 
-                if let Some('.') = chars.peek() {
+                if let Some((_, '.')) = chars.peek() {
                     let is_dot_followed_by_more_numbers = chars
                         .clone()
                         .nth(1)
-                        .map(|char| char.is_numeric())
+                        .map(|(_, char)| char.is_numeric())
                         .unwrap_or(false);
 
                     if is_dot_followed_by_more_numbers {
-                        value.push(chars.next().unwrap());
-                        while let Some(char) = chars.next_if(|char| char.is_numeric()) {
+                        value.push(chars.next().map(|(_, char)| char).unwrap());
+                        while let Some((_, char)) = chars.next_if(|(_, char)| char.is_numeric()) {
                             value.push(char);
                         }
                     }
@@ -134,14 +148,16 @@ pub fn lex(input: &str) -> Vec<Token> {
                     .ok()
             }
             char if char.is_ascii_alphabetic() || char == '_' => {
-                let mut value = String::from(char);
+                let start = i;
+                let mut end = start + char.len_utf8();
                 loop {
-                    match chars.next_if(|char| char.is_alphanumeric()) {
-                        Some(char) => {
-                            value.push(char);
+                    match chars.next_if(|(_, char)| char.is_alphanumeric()) {
+                        Some((_, char)) => {
+                            end += char.len_utf8();
                         }
                         _ => {
-                            break Some(match value.as_str() {
+                            let string = &input[start..end];
+                            break Some(match string {
                                 "and" => Token::Keyword(Keyword::And),
                                 "class" => Token::Keyword(Keyword::Class),
                                 "else" => Token::Keyword(Keyword::Else),
@@ -157,8 +173,8 @@ pub fn lex(input: &str) -> Vec<Token> {
                                 "true" => Token::Keyword(Keyword::True),
                                 "var" => Token::Keyword(Keyword::Var),
                                 "while" => Token::Keyword(Keyword::While),
-                                _ => Token::Literal(Literal::Identifier(value)),
-                            })
+                                _ => Token::Literal(Literal::Identifier(string)),
+                            });
                         }
                     }
                 }
@@ -225,16 +241,13 @@ mod test {
     fn can_lex_string_literals() {
         assert_eq!(
             lex("\"Hello, world!\""),
-            vec![Token::Literal(Literal::String("Hello, world!".to_string()))]
+            vec![Token::Literal(Literal::String("Hello, world!"))]
         );
     }
 
     #[test]
     fn can_lex_empty_string_literals() {
-        assert_eq!(
-            lex("\"\""),
-            vec![Token::Literal(Literal::String("".to_string()))]
-        );
+        assert_eq!(lex("\"\""), vec![Token::Literal(Literal::String(""))]);
     }
 
     #[test]
@@ -247,7 +260,7 @@ mod test {
     fn can_lex_multi_line_string_literals() {
         assert_eq!(
             lex("\"Hello, wor\nld!\""),
-            vec![Token::Literal(Literal::String("Hello, world!".to_string()))]
+            vec![Token::Literal(Literal::String("Hello, wor\nld!"))]
         );
     }
 
@@ -272,11 +285,11 @@ mod test {
         assert_eq!(
             lex("hello and class while value"),
             vec![
-                Token::Literal(Literal::Identifier("hello".to_string())),
+                Token::Literal(Literal::Identifier("hello")),
                 Token::Keyword(Keyword::And),
                 Token::Keyword(Keyword::Class),
                 Token::Keyword(Keyword::While),
-                Token::Literal(Literal::Identifier("value".to_string()))
+                Token::Literal(Literal::Identifier("value"))
             ]
         );
     }

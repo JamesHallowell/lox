@@ -1,10 +1,10 @@
 use {
     crate::{
-        lexer::{lex, Token},
+        lexer::lex,
         parser::{
-            parse, AssignExpr, BinaryExpr, BlockStmt, CallableExpr, Error as ParserError, Expr,
-            ExprStmt, GroupExpr, IfStmt, LiteralExpr, LogicalExpr, LogicalOperator, Stmt,
-            UnaryExpr, VarExpr, VarStmt, Visitor, WhileStmt,
+            parse, AssignExpr, BinaryExpr, BinaryOperator, BlockStmt, CallableExpr,
+            Error as ParserError, Expr, ExprStmt, GroupExpr, IfStmt, LiteralExpr, LogicalExpr,
+            LogicalOperator, Stmt, UnaryExpr, UnaryOperator, VarExpr, VarStmt, Visitor, WhileStmt,
         },
     },
     std::{
@@ -79,11 +79,11 @@ pub enum Error {
     #[error("undefined variable {0}")]
     UndefinedVar(String),
 
-    #[error("unexpected unary operator {0:?}")]
-    UnexpectedUnaryOperator(Token),
+    #[error("unexpected unary operator {0}")]
+    UnexpectedUnaryOperator(String),
 
-    #[error("unexpected binary operator {0:?}")]
-    UnexpectedBinaryOperator(Token),
+    #[error("unexpected binary operator {0}")]
+    UnexpectedBinaryOperator(String),
 }
 
 impl Visitor for Interpreter {
@@ -102,7 +102,7 @@ impl Visitor for Interpreter {
 
     fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<(), Self::Error> {
         self.environment.push_scope();
-        for stmt in stmt.stmts() {
+        for stmt in &stmt.stmts {
             self.visit_stmt(stmt)?;
         }
         self.environment.pop_scope();
@@ -110,14 +110,14 @@ impl Visitor for Interpreter {
     }
 
     fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), Self::Error> {
-        let _value = self.visit_expr(stmt.expr())?;
+        let _value = self.visit_expr(&stmt.expr)?;
         Ok(())
     }
 
     fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<(), Self::Error> {
-        if self.visit_expr(stmt.condition())?.is_truthy() {
-            self.visit_stmt(stmt.then_branch())?;
-        } else if let Some(else_branch) = stmt.else_branch() {
+        if self.visit_expr(&stmt.condition)?.is_truthy() {
+            self.visit_stmt(&stmt.then_branch)?;
+        } else if let Some(else_branch) = &stmt.else_branch {
             self.visit_stmt(else_branch)?;
         }
 
@@ -125,7 +125,7 @@ impl Visitor for Interpreter {
     }
 
     fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<(), Self::Error> {
-        let init_value = if let Some(expr) = stmt.init() {
+        let init_value = if let Some(expr) = &stmt.init {
             self.visit_expr(expr)?
         } else {
             Value::Nil
@@ -133,14 +133,14 @@ impl Visitor for Interpreter {
 
         self.environment
             .current_scope()
-            .define(stmt.ident(), init_value);
+            .define(stmt.ident, init_value);
 
         Ok(())
     }
 
     fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), Self::Error> {
-        while self.visit_expr(stmt.condition())?.is_truthy() {
-            self.visit_stmt(stmt.body())?;
+        while self.visit_expr(&stmt.condition)?.is_truthy() {
+            self.visit_stmt(&stmt.body)?;
         }
 
         Ok(())
@@ -160,42 +160,42 @@ impl Visitor for Interpreter {
     }
 
     fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<Self::Output, Self::Error> {
-        let value = self.visit_expr(expr.value())?;
+        let value = self.visit_expr(&expr.value)?;
 
         for scope in self.environment.scopes_mut() {
-            if let Some(var) = scope.get_mut(expr.ident()) {
+            if let Some(var) = scope.get_mut(expr.ident) {
                 *var = value;
                 return Ok(var.clone());
             }
         }
 
-        Err(Error::UndefinedVar(expr.ident().to_string()))
+        Err(Error::UndefinedVar(expr.ident.to_string()))
     }
 
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Result<Self::Output, Self::Error> {
-        let lhs = self.visit_expr(expr.left())?;
-        let rhs = self.visit_expr(expr.right())?;
+        let lhs = self.visit_expr(&expr.left)?;
+        let rhs = self.visit_expr(&expr.right)?;
 
-        match expr.operator() {
-            Token::Plus => Ok((lhs + rhs)?),
-            Token::Minus => Ok((lhs - rhs)?),
-            Token::Star => Ok((lhs * rhs)?),
-            Token::Slash => Ok((lhs / rhs)?),
-            Token::EqualEqual => Ok(Value::Boolean(lhs == rhs)),
-            Token::BangEqual => Ok(Value::Boolean(lhs != rhs)),
-            Token::Less => Ok(Value::Boolean(lhs < rhs)),
-            Token::LessEqual => Ok(Value::Boolean(lhs <= rhs)),
-            Token::Greater => Ok(Value::Boolean(lhs > rhs)),
-            Token::GreaterEqual => Ok(Value::Boolean(lhs >= rhs)),
-            token => Err(Error::UnexpectedBinaryOperator(token.clone())),
+        match expr.operator {
+            BinaryOperator::Plus => Ok((lhs + rhs)?),
+            BinaryOperator::Minus => Ok((lhs - rhs)?),
+            BinaryOperator::Multiply => Ok((lhs * rhs)?),
+            BinaryOperator::Divide => Ok((lhs / rhs)?),
+            BinaryOperator::Equal => Ok(Value::Boolean(lhs == rhs)),
+            BinaryOperator::NotEqual => Ok(Value::Boolean(lhs != rhs)),
+            BinaryOperator::LessThan => Ok(Value::Boolean(lhs < rhs)),
+            BinaryOperator::LessThanOrEqual => Ok(Value::Boolean(lhs <= rhs)),
+            BinaryOperator::GreaterThan => Ok(Value::Boolean(lhs > rhs)),
+            BinaryOperator::GreaterThanOrEqual => Ok(Value::Boolean(lhs >= rhs)),
         }
     }
 
     fn visit_callable_expr(&mut self, expr: &CallableExpr) -> Result<Self::Output, Self::Error> {
-        let mut callee = self.visit_expr(expr.callee())?;
+        let mut callee = self.visit_expr(&expr.callee)?;
 
         let args = expr
-            .args()
+            .args
+            .iter()
             .map(|arg| self.visit_expr(arg))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -203,17 +203,16 @@ impl Visitor for Interpreter {
     }
 
     fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Result<Self::Output, Self::Error> {
-        let rhs = self.visit_expr(expr.right())?;
+        let rhs = self.visit_expr(&expr.right)?;
 
-        match expr.operator() {
-            Token::Minus => Ok((-rhs)?),
-            Token::Bang => Ok(!rhs),
-            token => Err(Error::UnexpectedUnaryOperator(token.clone())),
+        match expr.operator {
+            UnaryOperator::Minus => Ok((-rhs)?),
+            UnaryOperator::Not => Ok(!rhs),
         }
     }
 
     fn visit_group_expr(&mut self, expr: &GroupExpr) -> Result<Self::Output, Self::Error> {
-        self.visit_expr(expr.grouped())
+        self.visit_expr(&expr.grouped)
     }
 
     fn visit_literal_expr(&mut self, expr: &LiteralExpr) -> Result<Self::Output, Self::Error> {
@@ -221,28 +220,28 @@ impl Visitor for Interpreter {
             LiteralExpr::Boolean(value) => Ok(Value::Boolean(*value)),
             LiteralExpr::Nil => Ok(Value::Nil),
             LiteralExpr::Number(value) => Ok(Value::Number(*value)),
-            LiteralExpr::String(value) => Ok(Value::String(value.clone())),
+            LiteralExpr::String(value) => Ok(Value::String(value.to_string())),
         }
     }
 
     fn visit_logical_expr(&mut self, expr: &LogicalExpr) -> Result<Self::Output, Self::Error> {
-        let left = self.visit_expr(expr.left())?;
+        let left = self.visit_expr(&expr.left)?;
 
-        match expr.operator() {
+        match expr.operator {
             LogicalOperator::And if !left.is_truthy() => Ok(left),
             LogicalOperator::Or if left.is_truthy() => Ok(left),
-            _ => self.visit_expr(expr.right()),
+            _ => self.visit_expr(&expr.right),
         }
     }
 
     fn visit_var_expr(&mut self, expr: &VarExpr) -> Result<Self::Output, Self::Error> {
         for scope in self.environment.scopes() {
-            if let Some(var) = scope.get(expr.ident()) {
+            if let Some(var) = scope.get(expr.ident) {
                 return Ok(var.clone());
             }
         }
 
-        Err(Error::UndefinedVar(expr.ident().to_string()))
+        Err(Error::UndefinedVar(expr.ident.to_string()))
     }
 }
 
