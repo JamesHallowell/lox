@@ -1,9 +1,12 @@
-use std::{
-    cell::RefCell,
-    cmp::{Ordering, PartialEq, PartialOrd},
-    fmt,
-    ops::{Add, Div, Mul, Neg, Not, Sub},
-    rc::Rc,
+use {
+    crate::{interpreter::Error, Interpreter},
+    std::{
+        cell::RefCell,
+        cmp::{Ordering, PartialEq, PartialOrd},
+        fmt,
+        ops::{Add, Div, Mul, Neg, Not, Sub},
+        rc::Rc,
+    },
 };
 
 #[derive(Clone)]
@@ -13,15 +16,6 @@ pub enum Value {
     String(String),
     Boolean(bool),
     Function(Rc<RefCell<dyn Callable>>),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("type mismatch: {0}")]
-    TypeMismatch(String),
-
-    #[error(transparent)]
-    CallError(#[from] CallError),
 }
 
 impl Value {
@@ -178,39 +172,36 @@ impl fmt::Debug for Value {
     }
 }
 
-pub trait Callable {
-    fn arity(&self) -> Option<usize>;
-    fn call(&mut self, args: &[Value]) -> Result<Value, CallError>;
+pub enum Arity {
+    N(usize),
+    Variadic,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum CallError {
-    #[error("can only call functions and classes")]
-    NotCallable,
-
-    #[error("arity mismatch, expected {expected} args, got {actual} args")]
-    ArityMismatch { expected: usize, actual: usize },
-
-    #[error("wrong argument type")]
-    WrongArgType,
+pub trait Callable {
+    fn arity(&self) -> Arity;
+    fn call(&mut self, args: &[Value], interpreter: &mut Interpreter) -> Result<Value, Error>;
 }
 
 impl Value {
-    pub fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+    pub fn call(
+        &mut self,
+        args: Vec<Value>,
+        interpreter: &mut Interpreter,
+    ) -> Result<Value, Error> {
         match self {
             Self::Function(func) => {
-                if let Some(arity) = func.borrow().arity() {
+                if let Arity::N(arity) = func.borrow().arity() {
                     if arity != args.len() {
-                        return Err(CallError::ArityMismatch {
+                        return Err(Error::ArityMismatch {
                             expected: arity,
                             actual: args.len(),
                         });
                     }
                 }
 
-                func.borrow_mut().call(&args)
+                func.borrow_mut().call(&args, interpreter)
             }
-            _ => Err(CallError::NotCallable),
+            _ => Err(Error::NotCallable),
         }
     }
 }

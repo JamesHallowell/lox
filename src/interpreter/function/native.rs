@@ -1,7 +1,10 @@
 use {
-    crate::interpreter::{
-        value::{CallError, Callable, Value},
-        Printer,
+    crate::{
+        interpreter::{
+            value::{Arity, Callable, Value},
+            Error, Printer,
+        },
+        Interpreter,
     },
     std::{
         thread::sleep,
@@ -12,11 +15,11 @@ use {
 pub struct Clock;
 
 impl Callable for Clock {
-    fn arity(&self) -> Option<usize> {
-        Some(0)
+    fn arity(&self) -> Arity {
+        Arity::N(0)
     }
 
-    fn call(&mut self, _args: &[Value]) -> Result<Value, CallError> {
+    fn call(&mut self, _args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         Ok(Value::Number(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -35,15 +38,15 @@ impl From<Clock> for Value {
 pub struct Sleep;
 
 impl Callable for Sleep {
-    fn arity(&self) -> Option<usize> {
-        Some(1)
+    fn arity(&self) -> Arity {
+        Arity::N(1)
     }
 
-    fn call(&mut self, args: &[Value]) -> Result<Value, CallError> {
+    fn call(&mut self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         let duration_to_sleep = if let Some(Value::Number(milliseconds)) = args.first() {
             Duration::from_millis(milliseconds.round() as u64)
         } else {
-            return Err(CallError::WrongArgType);
+            return Err(Error::WrongArgType);
         };
 
         sleep(duration_to_sleep);
@@ -70,13 +73,13 @@ impl<P> Callable for Print<P>
 where
     P: Printer,
 {
-    fn arity(&self) -> Option<usize> {
-        None
+    fn arity(&self) -> Arity {
+        Arity::Variadic
     }
 
-    fn call(&mut self, args: &[Value]) -> Result<Value, CallError> {
+    fn call(&mut self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         for arg in args {
-            self.0.print(&arg);
+            self.0.print(arg);
         }
         Ok(Value::Nil)
     }
@@ -94,11 +97,11 @@ where
 pub struct Assert;
 
 impl Callable for Assert {
-    fn arity(&self) -> Option<usize> {
-        None
+    fn arity(&self) -> Arity {
+        Arity::Variadic
     }
 
-    fn call(&mut self, args: &[Value]) -> Result<Value, CallError> {
+    fn call(&mut self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         for arg in args {
             assert!(arg.is_truthy());
         }

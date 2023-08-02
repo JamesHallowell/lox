@@ -3,29 +3,29 @@ use crate::{
     parser::{Error, TokenStream},
 };
 
-#[derive(Debug, PartialEq)]
-pub enum Expr<'a> {
-    Assign(AssignExpr<'a>),
-    Binary(BinaryExpr<'a>),
-    Callable(CallableExpr<'a>),
-    Group(GroupExpr<'a>),
-    Literal(LiteralExpr<'a>),
-    Logical(LogicalExpr<'a>),
-    Unary(UnaryExpr<'a>),
-    Var(VarExpr<'a>),
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Assign(AssignExpr),
+    Binary(BinaryExpr),
+    Callable(CallableExpr),
+    Group(GroupExpr),
+    Literal(LiteralExpr),
+    Logical(LogicalExpr),
+    Unary(UnaryExpr),
+    Var(VarExpr),
 }
 
-#[derive(Debug, PartialEq)]
-pub struct AssignExpr<'a> {
-    pub ident: &'a str,
-    pub value: Box<Expr<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignExpr {
+    pub ident: String,
+    pub value: Box<Expr>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct BinaryExpr<'a> {
-    pub left: Box<Expr<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct BinaryExpr {
+    pub left: Box<Expr>,
     pub operator: BinaryOperator,
-    pub right: Box<Expr<'a>>,
+    pub right: Box<Expr>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -42,10 +42,10 @@ pub enum BinaryOperator {
     GreaterThanOrEqual,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct UnaryExpr<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnaryExpr {
     pub operator: UnaryOperator,
-    pub right: Box<Expr<'a>>,
+    pub right: Box<Expr>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -54,65 +54,65 @@ pub enum UnaryOperator {
     Minus,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct CallableExpr<'a> {
-    pub callee: Box<Expr<'a>>,
-    pub args: Vec<Expr<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallableExpr {
+    pub callee: Box<Expr>,
+    pub args: Vec<Expr>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct GroupExpr<'a> {
-    pub grouped: Box<Expr<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupExpr {
+    pub grouped: Box<Expr>,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum LiteralExpr<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum LiteralExpr {
     Nil,
     Boolean(bool),
     Number(f64),
-    String(&'a str),
+    String(String),
 }
 
-impl From<bool> for Expr<'_> {
+impl From<bool> for Expr {
     fn from(value: bool) -> Self {
         Expr::Literal(LiteralExpr::Boolean(value))
     }
 }
 
-impl From<i32> for Expr<'_> {
+impl From<i32> for Expr {
     fn from(value: i32) -> Self {
         Expr::Literal(LiteralExpr::Number(value as f64))
     }
 }
 
-impl From<f64> for Expr<'_> {
+impl From<f64> for Expr {
     fn from(value: f64) -> Self {
         Expr::Literal(LiteralExpr::Number(value))
     }
 }
 
-impl<'a> From<&'a str> for Expr<'a> {
+impl<'a> From<&'a str> for Expr {
     fn from(value: &'a str) -> Self {
-        Expr::Literal(LiteralExpr::String(value))
+        Expr::Literal(LiteralExpr::String(value.to_string()))
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct LogicalExpr<'a> {
-    pub left: Box<Expr<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct LogicalExpr {
+    pub left: Box<Expr>,
     pub operator: LogicalOperator,
-    pub right: Box<Expr<'a>>,
+    pub right: Box<Expr>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum LogicalOperator {
     And,
     Or,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct VarExpr<'a> {
-    pub ident: &'a str,
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarExpr {
+    pub ident: String,
 }
 
 pub fn expression(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error> {
@@ -160,7 +160,7 @@ pub fn or(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error> {
     Ok((left, tokens))
 }
 
-pub fn and(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error> {
+pub fn and(tokens: TokenStream) -> Result<(Expr, TokenStream), Error> {
     let (mut left, mut tokens) = equality(tokens)?;
 
     while let Some(Token::Keyword(Keyword::And)) = tokens.peek() {
@@ -361,9 +361,12 @@ pub fn primary(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error
         }
         (Token::Literal(Literal::Number(number)), tokens) => Ok((Expr::from(number), tokens)),
         (Token::Literal(Literal::String(string)), tokens) => Ok((Expr::from(string), tokens)),
-        (Token::Literal(Literal::Identifier(ident)), tokens) => {
-            Ok((Expr::Var(VarExpr { ident }), tokens))
-        }
+        (Token::Literal(Literal::Identifier(ident)), tokens) => Ok((
+            Expr::Var(VarExpr {
+                ident: ident.to_string(),
+            }),
+            tokens,
+        )),
         (token, _) => Err(Error::UnexpectedToken(format!("{:?}", token))),
     }
 }

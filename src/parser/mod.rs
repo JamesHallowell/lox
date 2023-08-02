@@ -64,50 +64,56 @@ impl<'input> TokenStream<'input> {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Stmt<'a> {
-    Block(BlockStmt<'a>),
-    Expr(ExprStmt<'a>),
-    Fn(FnStmt<'a>),
-    If(IfStmt<'a>),
-    Var(VarStmt<'a>),
-    While(WhileStmt<'a>),
+#[derive(Debug, Clone, PartialEq)]
+pub enum Stmt {
+    Block(BlockStmt),
+    Expr(ExprStmt),
+    Fn(FnStmt),
+    If(IfStmt),
+    Return(ReturnStmt),
+    Var(VarStmt),
+    While(WhileStmt),
 }
 
-#[derive(Debug, PartialEq)]
-pub struct BlockStmt<'a> {
-    pub stmts: Vec<Stmt<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockStmt {
+    pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct ExprStmt<'a> {
-    pub expr: Expr<'a>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprStmt {
+    pub expr: Expr,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct FnStmt<'a> {
-    pub ident: &'a str,
-    pub params: Vec<&'a str>,
-    pub body: Box<Stmt<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct FnStmt {
+    pub ident: String,
+    pub params: Vec<String>,
+    pub body: Box<Stmt>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct IfStmt<'a> {
-    pub condition: Expr<'a>,
-    pub then_branch: Box<Stmt<'a>>,
-    pub else_branch: Option<Box<Stmt<'a>>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfStmt {
+    pub condition: Expr,
+    pub then_branch: Box<Stmt>,
+    pub else_branch: Option<Box<Stmt>>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct VarStmt<'a> {
-    pub ident: &'a str,
-    pub init: Option<Expr<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReturnStmt {
+    pub expr: Option<Expr>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct WhileStmt<'a> {
-    pub condition: Expr<'a>,
-    pub body: Box<Stmt<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct VarStmt {
+    pub ident: String,
+    pub init: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileStmt {
+    pub condition: Expr,
+    pub body: Box<Stmt>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,7 +128,7 @@ pub enum Error {
     InvalidAssignment,
 }
 
-pub fn parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Stmt<'a>>, Error> {
+pub fn parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Stmt>, Error> {
     let mut statements = vec![];
 
     let mut tokens = TokenStream { tokens };
@@ -144,6 +150,7 @@ fn statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> 
         Some(Token::Keyword(Keyword::Fn)) => fn_statement(tokens),
         Some(Token::Keyword(Keyword::While)) => while_statement(tokens),
         Some(Token::Keyword(Keyword::For)) => for_statement(tokens),
+        Some(Token::Keyword(Keyword::Return)) => return_statement(tokens),
         _ => expression_statement(tokens),
     }
 }
@@ -173,7 +180,7 @@ fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
     let mut params = vec![];
     while !matches!(tokens.peek(), Some(Token::RightParen)) {
         let (param, remaining_tokens) = tokens.next_ident()?;
-        params.push(param);
+        params.push(param.to_string());
 
         match remaining_tokens.next_if(Token::Comma)? {
             Some((_, remaining_tokens)) => tokens = remaining_tokens,
@@ -186,7 +193,7 @@ fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
 
     Ok((
         Stmt::Fn(FnStmt {
-            ident,
+            ident: ident.to_string(),
             params,
             body: Box::new(body),
         }),
@@ -220,6 +227,21 @@ fn if_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
     ))
 }
 
+fn return_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
+    let tokens = tokens.expect(Keyword::Return)?;
+
+    let (expr, tokens) = match tokens.next_if(Token::Semicolon)? {
+        Some((_, tokens)) => (None, tokens),
+        None => {
+            let (expr, tokens) = expression(tokens)?;
+            let tokens = tokens.expect(Token::Semicolon)?;
+            (Some(expr), tokens)
+        }
+    };
+
+    Ok((Stmt::Return(ReturnStmt { expr }), tokens))
+}
+
 fn var_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
     let tokens = tokens.expect(Keyword::Var)?;
     let (ident, tokens) = tokens.next_ident()?;
@@ -234,7 +256,13 @@ fn var_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Err
 
     let tokens = tokens.expect(Token::Semicolon)?;
 
-    Ok((Stmt::Var(VarStmt { ident, init }), tokens))
+    Ok((
+        Stmt::Var(VarStmt {
+            ident: ident.to_string(),
+            init,
+        }),
+        tokens,
+    ))
 }
 
 fn while_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
@@ -407,19 +435,25 @@ mod test {
 
         let first = Stmt::Expr(ExprStmt {
             expr: Expr::Callable(CallableExpr {
-                callee: Box::new(Expr::Var(VarExpr { ident: "foo" })),
+                callee: Box::new(Expr::Var(VarExpr {
+                    ident: "foo".to_string(),
+                })),
                 args: vec![],
             }),
         });
         let second = Stmt::Expr(ExprStmt {
             expr: Expr::Callable(CallableExpr {
-                callee: Box::new(Expr::Var(VarExpr { ident: "foo" })),
+                callee: Box::new(Expr::Var(VarExpr {
+                    ident: "foo".to_string(),
+                })),
                 args: vec![Expr::from(5), Expr::from(true)],
             }),
         });
         let third = Stmt::Expr(ExprStmt {
             expr: Expr::Callable(CallableExpr {
-                callee: Box::new(Expr::Var(VarExpr { ident: "foo" })),
+                callee: Box::new(Expr::Var(VarExpr {
+                    ident: "foo".to_string(),
+                })),
                 args: vec![
                     Expr::from(5),
                     Expr::from(true),
@@ -446,16 +480,22 @@ mod test {
         assert_eq!(
             statements,
             vec![Stmt::Fn(FnStmt {
-                ident: "foo",
-                params: vec!["a", "b"],
+                ident: "foo".to_string(),
+                params: vec!["a".to_string(), "b".to_string()],
                 body: Box::new(Stmt::Block(BlockStmt {
                     stmts: vec![Stmt::Expr(ExprStmt {
                         expr: Expr::Callable(CallableExpr {
-                            callee: Box::new(Expr::Var(VarExpr { ident: "print" })),
+                            callee: Box::new(Expr::Var(VarExpr {
+                                ident: "print".to_string()
+                            })),
                             args: vec![Expr::Binary(BinaryExpr {
-                                left: Box::new(Expr::Var(VarExpr { ident: "a" })),
+                                left: Box::new(Expr::Var(VarExpr {
+                                    ident: "a".to_string()
+                                })),
                                 operator: BinaryOperator::Plus,
-                                right: Box::new(Expr::Var(VarExpr { ident: "b" }))
+                                right: Box::new(Expr::Var(VarExpr {
+                                    ident: "b".to_string()
+                                }))
                             })]
                         })
                     })]

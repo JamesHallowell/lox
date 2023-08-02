@@ -1,4 +1,5 @@
 use crate::{
+    interpreter::function::Function,
     lexer::lex,
     parser::{
         parse, AssignExpr, BinaryExpr, BinaryOperator, BlockStmt, CallableExpr,
@@ -8,11 +9,13 @@ use crate::{
 };
 
 mod value;
-pub use value::{Error as ValueError, Value};
+pub use value::Value;
 
 mod env;
-use crate::parser::FnStmt;
-use env::Environment;
+use {
+    crate::parser::{FnStmt, ReturnStmt},
+    env::Environment,
+};
 
 mod function;
 
@@ -72,9 +75,6 @@ pub enum Error {
     #[error(transparent)]
     Parser(#[from] ParserError),
 
-    #[error(transparent)]
-    Value(#[from] ValueError),
-
     #[error("undefined variable {0}")]
     UndefinedVar(String),
 
@@ -83,52 +83,86 @@ pub enum Error {
 
     #[error("unexpected binary operator {0}")]
     UnexpectedBinaryOperator(String),
+
+    #[error("type mismatch: {0}")]
+    TypeMismatch(String),
+
+    #[error("can only call functions and classes")]
+    NotCallable,
+
+    #[error("arity mismatch, expected {expected} args, got {actual} args")]
+    ArityMismatch { expected: usize, actual: usize },
+
+    #[error("wrong argument type")]
+    WrongArgType,
 }
 
 impl Visitor for Interpreter {
     type Output = Value;
     type Error = Error;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Error> {
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Option<Self::Output>, Self::Error> {
         match stmt {
             Stmt::Block(stmt) => self.visit_block_stmt(stmt),
             Stmt::Expr(stmt) => self.visit_expr_stmt(stmt),
             Stmt::Fn(stmt) => self.visit_fn_stmt(stmt),
             Stmt::If(stmt) => self.visit_if_stmt(stmt),
+            Stmt::Return(stmt) => self.visit_return_stmt(stmt),
             Stmt::Var(stmt) => self.visit_var_stmt(stmt),
             Stmt::While(stmt) => self.visit_while_stmt(stmt),
         }
     }
 
-    fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<(), Self::Error> {
+    fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<Option<Self::Output>, Self::Error> {
         self.environment.push_scope();
+
+        let mut result = None;
         for stmt in &stmt.stmts {
-            self.visit_stmt(stmt)?;
+            let value = self.visit_stmt(stmt)?;
+            if value.is_some() {
+                result = value;
+                break;
+            }
         }
+
         self.environment.pop_scope();
-        Ok(())
+        Ok(result)
     }
 
-    fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), Self::Error> {
+    fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<Option<Self::Output>, Self::Error> {
         let _value = self.visit_expr(&stmt.expr)?;
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_fn_stmt(&mut self, _stmt: &FnStmt) -> Result<(), Self::Error> {
-        unimplemented!("functions are not implemented yet");
+    fn visit_fn_stmt(&mut self, stmt: &FnStmt) -> Result<Option<Self::Output>, Self::Error> {
+        let function = Function::new(stmt.clone());
+        self.environment
+            .global_scope()
+            .define(&stmt.ident, function);
+        Ok(None)
     }
 
-    fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<(), Self::Error> {
+    fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<Option<Self::Output>, Self::Error> {
         if self.visit_expr(&stmt.condition)?.is_truthy() {
-            self.visit_stmt(&stmt.then_branch)?;
+            self.visit_stmt(&stmt.then_branch)
         } else if let Some(else_branch) = &stmt.else_branch {
-            self.visit_stmt(else_branch)?;
+            self.visit_stmt(else_branch)
+        } else {
+            Ok(None)
         }
-
-        Ok(())
     }
 
-    fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<(), Self::Error> {
+    fn visit_return_stmt(
+        &mut self,
+        stmt: &ReturnStmt,
+    ) -> Result<Option<Self::Output>, Self::Error> {
+        match &stmt.expr {
+            Some(expr) => self.visit_expr(expr).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<Option<Self::Output>, Self::Error> {
         let init_value = if let Some(expr) = &stmt.init {
             self.visit_expr(expr)?
         } else {
@@ -137,17 +171,20 @@ impl Visitor for Interpreter {
 
         self.environment
             .current_scope()
-            .define(stmt.ident, init_value);
+            .define(&stmt.ident, init_value);
 
-        Ok(())
+        Ok(None)
     }
 
-    fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), Self::Error> {
+    fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<Option<Self::Output>, Self::Error> {
         while self.visit_expr(&stmt.condition)?.is_truthy() {
-            self.visit_stmt(&stmt.body)?;
+            let value = self.visit_stmt(&stmt.body)?;
+            if value.is_some() {
+                return Ok(value);
+            }
         }
 
-        Ok(())
+        Ok(None)
     }
 
     fn visit_expr(&mut self, expr: &Expr) -> Result<Self::Output, Self::Error> {
@@ -167,7 +204,7 @@ impl Visitor for Interpreter {
         let value = self.visit_expr(&expr.value)?;
 
         for scope in self.environment.scopes_mut() {
-            if let Some(var) = scope.get_mut(expr.ident) {
+            if let Some(var) = scope.get_mut(&expr.ident) {
                 *var = value;
                 return Ok(var.clone());
             }
@@ -203,7 +240,7 @@ impl Visitor for Interpreter {
             .map(|arg| self.visit_expr(arg))
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(callee.call(args).map_err(value::Error::from)?)
+        callee.call(args, self).map_err(Error::from)
     }
 
     fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Result<Self::Output, Self::Error> {
@@ -240,7 +277,7 @@ impl Visitor for Interpreter {
 
     fn visit_var_expr(&mut self, expr: &VarExpr) -> Result<Self::Output, Self::Error> {
         for scope in self.environment.scopes() {
-            if let Some(var) = scope.get(expr.ident) {
+            if let Some(var) = scope.get(&expr.ident) {
                 return Ok(var.clone());
             }
         }
@@ -254,7 +291,6 @@ mod test {
     use {
         super::*,
         std::{cell::RefCell, rc::Rc},
-        value::CallError,
     };
 
     #[derive(Default, Clone)]
@@ -437,12 +473,10 @@ mod test {
 
         assert!(matches!(
             result,
-            Err(Error::Value(ValueError::CallError(
-                CallError::ArityMismatch {
-                    expected: 1,
-                    actual: 3
-                }
-            )))
+            Err(Error::ArityMismatch {
+                expected: 1,
+                actual: 3
+            })
         ));
     }
 
@@ -453,10 +487,7 @@ mod test {
         let program = r#""hello"(1, 2, 3);"#;
 
         let result = interpreter.interpret(program);
-        assert!(matches!(
-            result,
-            Err(Error::Value(ValueError::CallError(CallError::NotCallable)))
-        ));
+        assert!(matches!(result, Err(Error::NotCallable)));
     }
 
     #[test]
@@ -504,5 +535,36 @@ mod test {
         "#;
 
         interpreter.interpret(program).unwrap();
+    }
+
+    #[test]
+    fn call_declared_function_with_return() {
+        let program = r#"
+        fn add(a, b) {
+            return a + b;
+        }
+
+        assert(add(2, 2) == 4);
+        "#;
+
+        Interpreter::default().interpret(program).unwrap();
+    }
+
+    #[test]
+    fn call_declared_function_with_multiple_return() {
+        let program = r#"
+        fn divide(a, b) {
+            if (b == 0) {
+                return "bad input";
+            }
+        
+            return a / b;
+        }
+
+        assert(divide(2, 0) == "bad input");
+        assert(divide(2, 2) == 1);
+        "#;
+
+        Interpreter::default().interpret(program).unwrap();
     }
 }

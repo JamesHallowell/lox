@@ -9,6 +9,20 @@ pub struct Scope {
     values: HashMap<String, Value>,
 }
 
+impl Scope {
+    pub fn define(&mut self, ident: &str, value: impl Into<Value>) {
+        self.values.insert(ident.to_owned(), value.into());
+    }
+
+    pub fn get(&self, ident: &str) -> Option<&Value> {
+        self.values.get(ident)
+    }
+
+    pub fn get_mut(&mut self, ident: &str) -> Option<&mut Value> {
+        self.values.get_mut(ident)
+    }
+}
+
 impl Default for Environment {
     fn default() -> Self {
         Self {
@@ -44,19 +58,5 @@ impl Environment {
 
     pub fn scopes_mut(&mut self) -> impl Iterator<Item = &mut Scope> {
         self.scopes.iter_mut().rev()
-    }
-}
-
-impl Scope {
-    pub fn define(&mut self, ident: &str, value: impl Into<Value>) {
-        self.values.insert(ident.to_string(), value.into());
-    }
-
-    pub fn get(&self, ident: &str) -> Option<&Value> {
-        self.values.get(ident)
-    }
-
-    pub fn get_mut(&mut self, ident: &str) -> Option<&mut Value> {
-        self.values.get_mut(ident)
     }
 }
