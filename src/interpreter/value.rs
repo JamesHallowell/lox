@@ -1,12 +1,9 @@
-use {
-    crate::interpreter::function::{CallError, Function},
-    std::{
-        cell::RefCell,
-        cmp::{Ordering, PartialEq, PartialOrd},
-        fmt,
-        ops::{Add, Div, Mul, Neg, Not, Sub},
-        rc::Rc,
-    },
+use std::{
+    cell::RefCell,
+    cmp::{Ordering, PartialEq, PartialOrd},
+    fmt,
+    ops::{Add, Div, Mul, Neg, Not, Sub},
+    rc::Rc,
 };
 
 #[derive(Clone)]
@@ -15,7 +12,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
-    Function(Rc<RefCell<dyn Function>>),
+    Function(Rc<RefCell<dyn Callable>>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -42,7 +39,7 @@ impl Value {
         !matches!(self, Self::Nil | Self::Boolean(false))
     }
 
-    pub fn function(func: impl Function + 'static) -> Self {
+    pub fn function(func: impl Callable + 'static) -> Self {
         Self::Function(Rc::new(RefCell::new(func)))
     }
 }
@@ -179,6 +176,23 @@ impl fmt::Debug for Value {
             Self::Function(_) => f.debug_tuple("Function").finish(),
         }
     }
+}
+
+pub trait Callable {
+    fn arity(&self) -> Option<usize>;
+    fn call(&mut self, args: &[Value]) -> Result<Value, CallError>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CallError {
+    #[error("can only call functions and classes")]
+    NotCallable,
+
+    #[error("arity mismatch, expected {expected} args, got {actual} args")]
+    ArityMismatch { expected: usize, actual: usize },
+
+    #[error("wrong argument type")]
+    WrongArgType,
 }
 
 impl Value {

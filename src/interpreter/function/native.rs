@@ -1,7 +1,6 @@
 use {
     crate::interpreter::{
-        function::{CallError, Function},
-        value::Value,
+        value::{CallError, Callable, Value},
         Printer,
     },
     std::{
@@ -12,7 +11,7 @@ use {
 
 pub struct Clock;
 
-impl Function for Clock {
+impl Callable for Clock {
     fn arity(&self) -> Option<usize> {
         Some(0)
     }
@@ -35,7 +34,7 @@ impl From<Clock> for Value {
 
 pub struct Sleep;
 
-impl Function for Sleep {
+impl Callable for Sleep {
     fn arity(&self) -> Option<usize> {
         Some(1)
     }
@@ -67,7 +66,7 @@ impl<P> Print<P> {
     }
 }
 
-impl<P> Function for Print<P>
+impl<P> Callable for Print<P>
 where
     P: Printer,
 {
@@ -94,7 +93,7 @@ where
 
 pub struct Assert;
 
-impl Function for Assert {
+impl Callable for Assert {
     fn arity(&self) -> Option<usize> {
         None
     }

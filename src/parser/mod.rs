@@ -44,6 +44,13 @@ impl<'input> TokenStream<'input> {
         }
     }
 
+    fn next_ident(self) -> Result<(&'input str, TokenStream<'input>), Error> {
+        match self.next()? {
+            (Token::Literal(Literal::Identifier(ident)), token_stream) => Ok((ident, token_stream)),
+            (token, _) => Err(Error::UnexpectedToken(format!("{:?}", token))),
+        }
+    }
+
     fn expect(
         self,
         expected_token: impl Into<Token<'input>>,
@@ -61,6 +68,7 @@ impl<'input> TokenStream<'input> {
 pub enum Stmt<'a> {
     Block(BlockStmt<'a>),
     Expr(ExprStmt<'a>),
+    Fn(FnStmt<'a>),
     If(IfStmt<'a>),
     Var(VarStmt<'a>),
     While(WhileStmt<'a>),
@@ -74,6 +82,13 @@ pub struct BlockStmt<'a> {
 #[derive(Debug, PartialEq)]
 pub struct ExprStmt<'a> {
     pub expr: Expr<'a>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FnStmt<'a> {
+    pub ident: &'a str,
+    pub params: Vec<&'a str>,
+    pub body: Box<Stmt<'a>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -126,6 +141,7 @@ fn statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> 
         Some(Token::LeftBrace) => block_statement(tokens),
         Some(Token::Keyword(Keyword::If)) => if_statement(tokens),
         Some(Token::Keyword(Keyword::Var)) => var_statement(tokens),
+        Some(Token::Keyword(Keyword::Fn)) => fn_statement(tokens),
         Some(Token::Keyword(Keyword::While)) => while_statement(tokens),
         Some(Token::Keyword(Keyword::For)) => for_statement(tokens),
         _ => expression_statement(tokens),
@@ -147,6 +163,35 @@ fn block_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), E
     let tokens = tokens.expect(Token::RightBrace)?;
 
     Ok((Stmt::Block(BlockStmt { stmts }), tokens))
+}
+
+fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
+    let tokens = tokens.expect(Keyword::Fn)?;
+    let (ident, tokens) = tokens.next_ident()?;
+
+    let mut tokens = tokens.expect(Token::LeftParen)?;
+    let mut params = vec![];
+    while !matches!(tokens.peek(), Some(Token::RightParen)) {
+        let (param, remaining_tokens) = tokens.next_ident()?;
+        params.push(param);
+
+        match remaining_tokens.next_if(Token::Comma)? {
+            Some((_, remaining_tokens)) => tokens = remaining_tokens,
+            None => tokens = remaining_tokens,
+        }
+    }
+    let tokens = tokens.expect(Token::RightParen)?;
+
+    let (body, tokens) = block_statement(tokens)?;
+
+    Ok((
+        Stmt::Fn(FnStmt {
+            ident,
+            params,
+            body: Box::new(body),
+        }),
+        tokens,
+    ))
 }
 
 fn if_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
@@ -177,13 +222,7 @@ fn if_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
 
 fn var_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
     let tokens = tokens.expect(Keyword::Var)?;
-    let (ident, tokens) = tokens.next()?;
-
-    let ident = if let Token::Literal(Literal::Identifier(ident)) = ident {
-        ident
-    } else {
-        return Err(Error::UnexpectedToken(format!("{:?}", ident)));
-    };
+    let (ident, tokens) = tokens.next_ident()?;
 
     let (init, tokens) = match tokens.next_if(Token::Equal)? {
         Some((_, tokens)) => {
@@ -391,5 +430,37 @@ mod test {
         });
 
         assert_eq!(statements, vec![first, second, third]);
+    }
+
+    #[test]
+    fn parse_function() {
+        let program = r#"
+        fn foo(a, b) {
+            print(a + b);
+        }
+        "#;
+
+        let tokens = lex(program);
+        let statements = parse(&tokens).unwrap();
+
+        assert_eq!(
+            statements,
+            vec![Stmt::Fn(FnStmt {
+                ident: "foo",
+                params: vec!["a", "b"],
+                body: Box::new(Stmt::Block(BlockStmt {
+                    stmts: vec![Stmt::Expr(ExprStmt {
+                        expr: Expr::Callable(CallableExpr {
+                            callee: Box::new(Expr::Var(VarExpr { ident: "print" })),
+                            args: vec![Expr::Binary(BinaryExpr {
+                                left: Box::new(Expr::Var(VarExpr { ident: "a" })),
+                                operator: BinaryOperator::Plus,
+                                right: Box::new(Expr::Var(VarExpr { ident: "b" }))
+                            })]
+                        })
+                    })]
+                }))
+            })]
+        );
     }
 }

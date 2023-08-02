@@ -11,6 +11,7 @@ mod value;
 pub use value::{Error as ValueError, Value};
 
 mod env;
+use crate::parser::FnStmt;
 use env::Environment;
 
 mod function;
@@ -92,6 +93,7 @@ impl Visitor for Interpreter {
         match stmt {
             Stmt::Block(stmt) => self.visit_block_stmt(stmt),
             Stmt::Expr(stmt) => self.visit_expr_stmt(stmt),
+            Stmt::Fn(stmt) => self.visit_fn_stmt(stmt),
             Stmt::If(stmt) => self.visit_if_stmt(stmt),
             Stmt::Var(stmt) => self.visit_var_stmt(stmt),
             Stmt::While(stmt) => self.visit_while_stmt(stmt),
@@ -110,6 +112,10 @@ impl Visitor for Interpreter {
     fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), Self::Error> {
         let _value = self.visit_expr(&stmt.expr)?;
         Ok(())
+    }
+
+    fn visit_fn_stmt(&mut self, _stmt: &FnStmt) -> Result<(), Self::Error> {
+        unimplemented!("functions are not implemented yet");
     }
 
     fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<(), Self::Error> {
@@ -247,8 +253,8 @@ impl Visitor for Interpreter {
 mod test {
     use {
         super::*,
-        function::CallError,
         std::{cell::RefCell, rc::Rc},
+        value::CallError,
     };
 
     #[derive(Default, Clone)]

@@ -1,5 +1,5 @@
 use crate::parser::{
-    AssignExpr, BinaryExpr, BlockStmt, CallableExpr, Expr, ExprStmt, GroupExpr, IfStmt,
+    AssignExpr, BinaryExpr, BlockStmt, CallableExpr, Expr, ExprStmt, FnStmt, GroupExpr, IfStmt,
     LiteralExpr, LogicalExpr, Stmt, UnaryExpr, VarExpr, VarStmt, WhileStmt,
 };
 
@@ -10,6 +10,7 @@ pub trait Visitor {
     fn visit_stmt(&mut self, stmt: &Stmt) -> Result<(), Self::Error>;
     fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<(), Self::Error>;
     fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<(), Self::Error>;
+    fn visit_fn_stmt(&mut self, stmt: &FnStmt) -> Result<(), Self::Error>;
     fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<(), Self::Error>;
     fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<(), Self::Error>;
     fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<(), Self::Error>;
