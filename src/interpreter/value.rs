@@ -194,7 +194,7 @@ impl Value {
                     }
                 }
 
-                func.borrow_mut().call(args)
+                func.borrow_mut().call(&args)
             }
             _ => Err(CallError::NotCallable),
         }

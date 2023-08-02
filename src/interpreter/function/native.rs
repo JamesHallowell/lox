@@ -17,7 +17,7 @@ impl Function for Clock {
         Some(0)
     }
 
-    fn call(&mut self, _args: Vec<Value>) -> Result<Value, CallError> {
+    fn call(&mut self, _args: &[Value]) -> Result<Value, CallError> {
         Ok(Value::Number(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -40,7 +40,7 @@ impl Function for Sleep {
         Some(1)
     }
 
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+    fn call(&mut self, args: &[Value]) -> Result<Value, CallError> {
         let duration_to_sleep = if let Some(Value::Number(milliseconds)) = args.first() {
             Duration::from_millis(milliseconds.round() as u64)
         } else {
@@ -75,7 +75,7 @@ where
         None
     }
 
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+    fn call(&mut self, args: &[Value]) -> Result<Value, CallError> {
         for arg in args {
             self.0.print(&arg);
         }
@@ -99,7 +99,7 @@ impl Function for Assert {
         None
     }
 
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
+    fn call(&mut self, args: &[Value]) -> Result<Value, CallError> {
         for arg in args {
             assert!(arg.is_truthy());
         }
