@@ -1,9 +1,12 @@
-use std::{
-    cell::RefCell,
-    cmp::{Ordering, PartialEq, PartialOrd},
-    fmt,
-    ops::{Add, Div, Mul, Neg, Not, Sub},
-    rc::Rc,
+use {
+    crate::interpreter::function::{CallError, Function},
+    std::{
+        cell::RefCell,
+        cmp::{Ordering, PartialEq, PartialOrd},
+        fmt,
+        ops::{Add, Div, Mul, Neg, Not, Sub},
+        rc::Rc,
+    },
 };
 
 #[derive(Clone)]
@@ -176,23 +179,6 @@ impl fmt::Debug for Value {
             Self::Function(_) => f.debug_tuple("Function").finish(),
         }
     }
-}
-
-pub trait Function {
-    fn arity(&self) -> Option<usize>;
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError>;
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum CallError {
-    #[error("can only call functions and classes")]
-    NotCallable,
-
-    #[error("arity mismatch, expected {expected} args, got {actual} args")]
-    ArityMismatch { expected: usize, actual: usize },
-
-    #[error("wrong argument type")]
-    WrongArgType,
 }
 
 impl Value {

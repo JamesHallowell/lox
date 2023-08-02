@@ -1,23 +1,19 @@
-use {
-    crate::{
-        lexer::lex,
-        parser::{
-            parse, AssignExpr, BinaryExpr, BinaryOperator, BlockStmt, CallableExpr,
-            Error as ParserError, Expr, ExprStmt, GroupExpr, IfStmt, LiteralExpr, LogicalExpr,
-            LogicalOperator, Stmt, UnaryExpr, UnaryOperator, VarExpr, VarStmt, Visitor, WhileStmt,
-        },
-    },
-    std::{
-        thread::sleep,
-        time::{Duration, SystemTime, UNIX_EPOCH},
+use crate::{
+    lexer::lex,
+    parser::{
+        parse, AssignExpr, BinaryExpr, BinaryOperator, BlockStmt, CallableExpr,
+        Error as ParserError, Expr, ExprStmt, GroupExpr, IfStmt, LiteralExpr, LogicalExpr,
+        LogicalOperator, Stmt, UnaryExpr, UnaryOperator, VarExpr, VarStmt, Visitor, WhileStmt,
     },
 };
 
 mod value;
-pub use value::{CallError, Error as ValueError, Function, Value};
+pub use value::{Error as ValueError, Value};
 
 mod env;
 use env::Environment;
+
+mod function;
 
 pub struct Interpreter {
     environment: Environment,
@@ -48,9 +44,11 @@ impl Interpreter {
         };
 
         let global_scope = interpreter.environment.global_scope();
+
+        use function::native::{Assert, Clock, Print, Sleep};
         global_scope.define("clock", Clock);
         global_scope.define("sleep", Sleep);
-        global_scope.define("print", Print(printer));
+        global_scope.define("print", Print::new(printer));
         global_scope.define("assert", Assert);
 
         interpreter
@@ -245,107 +243,11 @@ impl Visitor for Interpreter {
     }
 }
 
-struct Clock;
-
-impl Function for Clock {
-    fn arity(&self) -> Option<usize> {
-        Some(0)
-    }
-
-    fn call(&mut self, _args: Vec<Value>) -> Result<Value, CallError> {
-        Ok(Value::Number(
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs_f64(),
-        ))
-    }
-}
-
-impl From<Clock> for Value {
-    fn from(clock: Clock) -> Value {
-        Value::function(clock)
-    }
-}
-
-struct Sleep;
-
-impl Function for Sleep {
-    fn arity(&self) -> Option<usize> {
-        Some(1)
-    }
-
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
-        let duration_to_sleep = if let Some(Value::Number(milliseconds)) = args.first() {
-            Duration::from_millis(milliseconds.round() as u64)
-        } else {
-            return Err(CallError::WrongArgType);
-        };
-
-        sleep(duration_to_sleep);
-
-        Ok(Value::Nil)
-    }
-}
-
-impl From<Sleep> for Value {
-    fn from(sleep: Sleep) -> Self {
-        Value::function(sleep)
-    }
-}
-
-struct Print<P>(P);
-
-impl<P> Function for Print<P>
-where
-    P: Printer,
-{
-    fn arity(&self) -> Option<usize> {
-        None
-    }
-
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
-        for arg in args {
-            self.0.print(&arg);
-        }
-        Ok(Value::Nil)
-    }
-}
-
-impl<P> From<Print<P>> for Value
-where
-    P: Printer + 'static,
-{
-    fn from(print: Print<P>) -> Self {
-        Value::function(print)
-    }
-}
-
-struct Assert;
-
-impl Function for Assert {
-    fn arity(&self) -> Option<usize> {
-        None
-    }
-
-    fn call(&mut self, args: Vec<Value>) -> Result<Value, CallError> {
-        for arg in args {
-            assert!(arg.is_truthy());
-        }
-        Ok(Value::Nil)
-    }
-}
-
-impl From<Assert> for Value {
-    fn from(assert: Assert) -> Self {
-        Value::function(assert)
-    }
-}
-
 #[cfg(test)]
 mod test {
     use {
         super::*,
+        function::CallError,
         std::{cell::RefCell, rc::Rc},
     };
 
