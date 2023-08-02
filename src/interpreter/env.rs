@@ -1,37 +1,58 @@
-use {crate::Value, std::collections::HashMap};
+use {
+    crate::{
+        interpreter::{
+            function::native::{Assert, Clock, Print, Sleep},
+            Printer, StdOutPrinter,
+        },
+        Value,
+    },
+    std::collections::HashMap,
+};
 
 pub struct Environment {
     scopes: Vec<Scope>,
 }
 
-#[derive(Default)]
-pub struct Scope {
-    values: HashMap<String, Value>,
-}
-
-impl Scope {
-    pub fn define(&mut self, ident: &str, value: impl Into<Value>) {
-        self.values.insert(ident.to_owned(), value.into());
-    }
-
-    pub fn get(&self, ident: &str) -> Option<&Value> {
-        self.values.get(ident)
-    }
-
-    pub fn get_mut(&mut self, ident: &str) -> Option<&mut Value> {
-        self.values.get_mut(ident)
-    }
-}
-
 impl Default for Environment {
     fn default() -> Self {
-        Self {
-            scopes: vec![Scope::default()],
-        }
+        Self::new()
+            .with_clock()
+            .with_assert()
+            .with_sleep()
+            .with_print(StdOutPrinter)
     }
 }
 
 impl Environment {
+    pub fn new() -> Self {
+        Self {
+            scopes: vec![Scope::default()],
+        }
+    }
+
+    pub fn with_assert(mut self) -> Self {
+        self.global_scope().define("assert", Assert);
+        self
+    }
+
+    pub fn with_clock(mut self) -> Self {
+        self.global_scope().define("clock", Clock);
+        self
+    }
+
+    pub fn with_print<P>(mut self, printer: P) -> Self
+    where
+        P: Printer + 'static,
+    {
+        self.global_scope().define("print", Print::new(printer));
+        self
+    }
+
+    pub fn with_sleep(mut self) -> Self {
+        self.global_scope().define("sleep", Sleep);
+        self
+    }
+
     pub fn push_scope(&mut self) {
         self.scopes.push(Scope::default());
     }
@@ -58,5 +79,24 @@ impl Environment {
 
     pub fn scopes_mut(&mut self) -> impl Iterator<Item = &mut Scope> {
         self.scopes.iter_mut().rev()
+    }
+}
+
+#[derive(Default)]
+pub struct Scope {
+    values: HashMap<String, Value>,
+}
+
+impl Scope {
+    pub fn define(&mut self, ident: &str, value: impl Into<Value>) {
+        self.values.insert(ident.to_owned(), value.into());
+    }
+
+    pub fn get(&self, ident: &str) -> Option<&Value> {
+        self.values.get(ident)
+    }
+
+    pub fn get_mut(&mut self, ident: &str) -> Option<&mut Value> {
+        self.values.get_mut(ident)
     }
 }

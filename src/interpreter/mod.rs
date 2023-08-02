@@ -43,19 +43,9 @@ impl Printer for StdOutPrinter {
 
 impl Interpreter {
     pub fn with_printer(printer: impl Printer + 'static) -> Self {
-        let mut interpreter = Self {
-            environment: Environment::default(),
-        };
-
-        let global_scope = interpreter.environment.global_scope();
-
-        use function::native::{Assert, Clock, Print, Sleep};
-        global_scope.define("clock", Clock);
-        global_scope.define("sleep", Sleep);
-        global_scope.define("print", Print::new(printer));
-        global_scope.define("assert", Assert);
-
-        interpreter
+        Self {
+            environment: Environment::default().with_print(printer),
+        }
     }
 
     pub fn interpret(&mut self, program: &str) -> Result<(), Error> {
