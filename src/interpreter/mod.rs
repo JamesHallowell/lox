@@ -33,13 +33,13 @@ impl Default for Interpreter {
 }
 
 pub trait Printer {
-    fn print(&mut self, value: &Value);
+    fn print(&self, value: &Value);
 }
 
 pub struct StdOutPrinter;
 
 impl Printer for StdOutPrinter {
-    fn print(&mut self, value: &Value) {
+    fn print(&self, value: &Value) {
         println!("{value}");
     }
 }
@@ -195,6 +195,7 @@ impl ExprVisitor for Interpreter {
             BinaryOperator::Minus => Ok((lhs - rhs)?),
             BinaryOperator::Multiply => Ok((lhs * rhs)?),
             BinaryOperator::Divide => Ok((lhs / rhs)?),
+            BinaryOperator::Modulo => Ok((lhs % rhs)?),
             BinaryOperator::Equal => Ok(Value::Boolean(lhs == rhs)),
             BinaryOperator::NotEqual => Ok(Value::Boolean(lhs != rhs)),
             BinaryOperator::LessThan => Ok(Value::Boolean(lhs < rhs)),
@@ -268,7 +269,7 @@ mod test {
     struct SpyPrinter(Rc<RefCell<Vec<Value>>>);
 
     impl Printer for SpyPrinter {
-        fn print(&mut self, value: &Value) {
+        fn print(&self, value: &Value) {
             self.0.borrow_mut().push(value.clone());
         }
     }

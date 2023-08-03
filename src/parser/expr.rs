@@ -34,6 +34,7 @@ pub enum BinaryOperator {
     Minus,
     Multiply,
     Divide,
+    Modulo,
     Equal,
     NotEqual,
     LessThan,
@@ -256,11 +257,12 @@ pub fn term(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error> {
 pub fn factor(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error> {
     let (mut left, mut tokens) = unary(tokens)?;
 
-    while let Some(Token::Slash | Token::Star) = tokens.peek() {
+    while let Some(Token::Slash | Token::Star | Token::Percent) = tokens.peek() {
         let (operator, leftover) = tokens.next()?;
         let operator = match operator {
             Token::Slash => BinaryOperator::Divide,
             Token::Star => BinaryOperator::Multiply,
+            Token::Percent => BinaryOperator::Modulo,
             _ => return Err(Error::UnexpectedToken(format!("{:?}", operator))),
         };
 

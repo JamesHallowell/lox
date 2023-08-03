@@ -11,6 +11,7 @@ pub enum Token<'input> {
     Semicolon,
     Slash,
     Star,
+    Percent,
     Bang,
     BangEqual,
     Equal,
@@ -81,6 +82,7 @@ pub fn lex(input: &str) -> Vec<Token> {
             '+' => Some(Token::Plus),
             ';' => Some(Token::Semicolon),
             '*' => Some(Token::Star),
+            '%' => Some(Token::Percent),
             '!' => match chars.next_if(char_equals('=')) {
                 Some(_) => Some(Token::BangEqual),
                 None => Some(Token::Bang),

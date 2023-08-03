@@ -1,10 +1,9 @@
 use {
     crate::{interpreter::Error, Interpreter},
     std::{
-        cell::RefCell,
         cmp::{Ordering, PartialEq, PartialOrd},
         fmt,
-        ops::{Add, Div, Mul, Neg, Not, Sub},
+        ops::{Add, Div, Mul, Neg, Not, Rem, Sub},
         rc::Rc,
     },
 };
@@ -15,7 +14,7 @@ pub enum Value {
     Number(f64),
     String(String),
     Boolean(bool),
-    Function(Rc<RefCell<dyn Callable>>),
+    Function(Rc<dyn Callable>),
 }
 
 impl Value {
@@ -34,7 +33,7 @@ impl Value {
     }
 
     pub fn function(func: impl Callable + 'static) -> Self {
-        Self::Function(Rc::new(RefCell::new(func)))
+        Self::Function(Rc::new(func))
     }
 }
 
@@ -95,6 +94,21 @@ impl Div<Self> for Value {
             (Self::Number(lhs), Self::Number(rhs)) => Ok(Self::Number(lhs / rhs)),
             (lhs, rhs) => Err(Error::TypeMismatch(format!(
                 "cannot perform division on {} and {}",
+                lhs.type_name(),
+                rhs.type_name()
+            ))),
+        }
+    }
+}
+
+impl Rem<Self> for Value {
+    type Output = Result<Self, Error>;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Self::Number(lhs), Self::Number(rhs)) => Ok(Self::Number(lhs % rhs)),
+            (lhs, rhs) => Err(Error::TypeMismatch(format!(
+                "cannot perform modulo on {} and {}",
                 lhs.type_name(),
                 rhs.type_name()
             ))),
@@ -179,7 +193,7 @@ pub enum Arity {
 
 pub trait Callable {
     fn arity(&self) -> Arity;
-    fn call(&mut self, args: &[Value], interpreter: &mut Interpreter) -> Result<Value, Error>;
+    fn call(&self, args: &[Value], interpreter: &mut Interpreter) -> Result<Value, Error>;
 }
 
 impl Value {
@@ -189,8 +203,8 @@ impl Value {
         interpreter: &mut Interpreter,
     ) -> Result<Value, Error> {
         match self {
-            Self::Function(func) => {
-                if let Arity::N(arity) = func.borrow().arity() {
+            Self::Function(function) => {
+                if let Arity::N(arity) = function.arity() {
                     if arity != args.len() {
                         return Err(Error::ArityMismatch {
                             expected: arity,
@@ -199,7 +213,7 @@ impl Value {
                     }
                 }
 
-                func.borrow_mut().call(&args, interpreter)
+                function.call(&args, interpreter)
             }
             _ => Err(Error::NotCallable),
         }

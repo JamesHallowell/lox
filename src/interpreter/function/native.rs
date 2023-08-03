@@ -19,7 +19,7 @@ impl Callable for Clock {
         Arity::N(0)
     }
 
-    fn call(&mut self, _args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
+    fn call(&self, _args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         Ok(Value::Number(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -42,7 +42,7 @@ impl Callable for Sleep {
         Arity::N(1)
     }
 
-    fn call(&mut self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
+    fn call(&self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         let duration_to_sleep = if let Some(Value::Number(milliseconds)) = args.first() {
             Duration::from_millis(milliseconds.round() as u64)
         } else {
@@ -77,7 +77,7 @@ where
         Arity::Variadic
     }
 
-    fn call(&mut self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
+    fn call(&self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         for arg in args {
             self.0.print(arg);
         }
@@ -101,7 +101,7 @@ impl Callable for Assert {
         Arity::Variadic
     }
 
-    fn call(&mut self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
+    fn call(&self, args: &[Value], _: &mut Interpreter) -> Result<Value, Error> {
         for arg in args {
             assert!(arg.is_truthy());
         }

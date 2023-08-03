@@ -7,7 +7,7 @@ use {
         parser::{FnStmt, StmtVisitor},
         Interpreter, Value,
     },
-    std::{cell::RefCell, rc::Rc},
+    std::rc::Rc,
 };
 
 pub mod native;
@@ -27,7 +27,7 @@ impl Callable for Function {
         Arity::N(self.stmt.params.len())
     }
 
-    fn call(&mut self, args: &[Value], interpreter: &mut Interpreter) -> Result<Value, Error> {
+    fn call(&self, args: &[Value], interpreter: &mut Interpreter) -> Result<Value, Error> {
         interpreter.environment.push_scope();
         for (param, arg) in self.stmt.params.iter().zip(args) {
             interpreter.environment.define(param, arg.clone());
@@ -47,6 +47,6 @@ impl Callable for Function {
 
 impl From<Function> for Value {
     fn from(value: Function) -> Self {
-        Self::Function(Rc::new(RefCell::new(value)))
+        Self::Function(Rc::new(value))
     }
 }
