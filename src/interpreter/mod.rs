@@ -543,7 +543,25 @@ mod test {
           assert(getA() == "global");
           var a = "block";
           assert(getA() == "global");
+          assert(a == "block");
         }
+        "#;
+
+        Interpreter::default().interpret(program).unwrap();
+    }
+
+    #[test]
+    fn split_declaration_and_definition() {
+        let program = r#"
+        var x;
+        {
+          {
+            var x = "inner";
+            print(x);
+          }
+          x = 5;
+        }
+        assert(x == 5);
         "#;
 
         Interpreter::default().interpret(program).unwrap();

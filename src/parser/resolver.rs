@@ -4,7 +4,10 @@ use {
         GroupExpr, Ident, IfStmt, LiteralExpr, LogicalExpr, ReturnStmt, Stmt, StmtVisitor,
         UnaryExpr, VarExpr, VarStmt, WhileStmt,
     },
-    std::collections::HashMap,
+    std::{
+        collections::{hash_map::Entry, HashMap},
+        mem,
+    },
 };
 
 pub fn resolve(stmts: &[Stmt]) -> Result<Vec<Stmt>, Error> {
@@ -15,7 +18,15 @@ pub fn resolve(stmts: &[Stmt]) -> Result<Vec<Stmt>, Error> {
 #[derive(Default)]
 struct Resolver {
     scopes: Vec<Scope>,
-    inside_function: bool,
+    state: ResolverState,
+}
+
+#[derive(Debug, Clone, Default)]
+enum ResolverState {
+    #[default]
+    None,
+    InsideFunction,
+    InitialisingVar(Ident),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,8 +67,15 @@ impl Resolver {
         self.scopes.push(Scope::default());
     }
 
-    fn pop_scope(&mut self) {
-        self.scopes.pop();
+    fn pop_scope(&mut self) -> Result<(), Error> {
+        if let Some(scope) = self.scopes.pop() {
+            for (ident, state) in scope.locals {
+                if !matches!(state, VarState::Accessed) {
+                    return Err(Error::Unused(ident));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn set_state(&mut self, ident: &Ident, state: VarState) {
@@ -66,17 +84,11 @@ impl Resolver {
         }
     }
 
-    #[must_use]
-    fn resolve_name(&mut self, ident: &Ident) -> Option<(usize, Ident)> {
-        for (i, scope) in self.scopes.iter().rev().enumerate() {
-            if scope.locals.contains_key(ident) {
-                return scope
-                    .locals
-                    .get_key_value(ident)
-                    .map(|(ident, _)| (i, ident.clone()));
-            }
-        }
-        None
+    fn is_ident_already_declared_at_current_scope(&self, ident: &Ident) -> bool {
+        self.scopes
+            .last()
+            .map(|scope| scope.locals.contains_key(ident))
+            .unwrap_or(false)
     }
 }
 
@@ -91,7 +103,7 @@ impl StmtVisitor for Resolver {
             .iter()
             .map(|stmt| self.visit_stmt(stmt))
             .collect::<Result<_, _>>()?;
-        self.pop_scope();
+        self.pop_scope()?;
 
         Ok(Stmt::Block(BlockStmt { stmts }))
     }
@@ -103,10 +115,13 @@ impl StmtVisitor for Resolver {
     }
 
     fn visit_fn_stmt(&mut self, stmt: &FnStmt) -> Result<Self::Output, Self::Error> {
+        if self.is_ident_already_declared_at_current_scope(&stmt.ident) {
+            return Err(Error::AlreadyDeclared(stmt.ident.clone()));
+        }
+
         self.set_state(&stmt.ident, VarState::Defined);
 
-        let enclosing_function = self.inside_function;
-        self.inside_function = true;
+        let mut previous_state = mem::replace(&mut self.state, ResolverState::InsideFunction);
 
         self.push_scope();
 
@@ -120,9 +135,9 @@ impl StmtVisitor for Resolver {
             .map(|stmt| self.visit_stmt(stmt))
             .collect::<Result<_, _>>()?;
 
-        self.pop_scope();
+        self.pop_scope()?;
 
-        self.inside_function = enclosing_function;
+        mem::swap(&mut self.state, &mut previous_state);
 
         Ok(Stmt::Fn(FnStmt {
             ident: stmt.ident.clone(),
@@ -149,7 +164,7 @@ impl StmtVisitor for Resolver {
     }
 
     fn visit_return_stmt(&mut self, stmt: &ReturnStmt) -> Result<Self::Output, Self::Error> {
-        if !self.inside_function {
+        if !matches!(self.state, ResolverState::InsideFunction) {
             return Err(Error::InvalidReturn);
         }
 
@@ -163,17 +178,28 @@ impl StmtVisitor for Resolver {
     }
 
     fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<Self::Output, Self::Error> {
-        if let Some((0, _)) = self.resolve_name(&stmt.ident) {
+        if self.is_ident_already_declared_at_current_scope(&stmt.ident) {
             return Err(Error::AlreadyDeclared(stmt.ident.clone()));
         }
 
         self.set_state(&stmt.ident, VarState::Declared);
+
+        let mut previous_state = mem::replace(
+            &mut self.state,
+            ResolverState::InitialisingVar(stmt.ident.clone()),
+        );
+
         let init = stmt
             .init
             .as_ref()
             .map(|expr| self.visit_expr(expr))
             .transpose()?;
-        self.set_state(&stmt.ident, VarState::Defined);
+
+        mem::swap(&mut self.state, &mut previous_state);
+
+        if stmt.init.is_some() {
+            self.set_state(&stmt.ident, VarState::Defined);
+        }
 
         Ok(Stmt::Var(VarStmt {
             ident: stmt.ident.clone(),
@@ -196,12 +222,21 @@ impl ExprVisitor for Resolver {
     fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<Self::Output, Self::Error> {
         let value = self.visit_expr(&expr.value).map(Box::new)?;
 
-        let ident = match self.resolve_name(&expr.ident) {
-            Some((_, resolved)) => resolved,
-            None => expr.ident.clone(),
-        };
+        for scope in self.scopes.iter_mut().rev() {
+            if let Entry::Occupied(mut entry) = scope.locals.entry(expr.ident.clone()) {
+                entry.insert(VarState::Accessed);
 
-        Ok(Expr::Assign(AssignExpr { ident, value }))
+                return Ok(Expr::Assign(AssignExpr {
+                    ident: entry.key().clone(),
+                    value,
+                }));
+            }
+        }
+
+        Ok(Expr::Assign(AssignExpr {
+            ident: expr.ident.clone(),
+            value,
+        }))
     }
 
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Result<Self::Output, Self::Error> {
@@ -257,19 +292,27 @@ impl ExprVisitor for Resolver {
     }
 
     fn visit_var_expr(&mut self, expr: &VarExpr) -> Result<Self::Output, Self::Error> {
-        if let Some(scope) = self.scopes.last() {
-            if let Some(VarState::Declared) = scope.locals.get(&expr.ident) {
-                return Err(Error::InitialisedWithItself(expr.ident.clone()));
+        if matches!(&self.state, ResolverState::InitialisingVar(ident) if ident == &expr.ident) {
+            return Err(Error::InitialisedWithItself(expr.ident.clone()));
+        }
+
+        for scope in self.scopes.iter_mut().rev() {
+            if let Entry::Occupied(mut entry) = scope.locals.entry(expr.ident.clone()) {
+                let previous_state = entry.insert(VarState::Accessed);
+
+                if matches!(previous_state, VarState::Declared) {
+                    return Err(Error::Undefined(entry.key().clone()));
+                }
+
+                return Ok(Expr::Var(VarExpr {
+                    ident: entry.key().clone(),
+                }));
             }
         }
 
-        let ident = if let Some((_, resolved)) = self.resolve_name(&expr.ident) {
-            resolved
-        } else {
-            expr.ident.clone()
-        };
-
-        Ok(Expr::Var(VarExpr { ident }))
+        Ok(Expr::Var(VarExpr {
+            ident: expr.ident.clone(),
+        }))
     }
 }
 
@@ -323,9 +366,9 @@ mod test {
                 fn c() {
                     return "c";
                 }
-                return "b";
+                return c();
             }
-            return "a";
+            return b();
         }
         "#;
 
@@ -356,5 +399,39 @@ mod test {
 
         let result = resolve(&parse(&lex(program)).unwrap());
         assert!(matches!(result, Err(Error::Undefined(_))));
+    }
+
+    #[test]
+    fn vars_can_be_defined_in_different_scopes() {
+        let program = r#"
+        fn foo() {
+            var a;
+            a = 3;
+            
+            var b;
+            {
+              b = 5;
+            }
+            
+            assert(a == 3);
+            assert(b == 5);
+        }
+        "#;
+
+        let result = resolve(&parse(&lex(program)).unwrap());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cannot_declare_functions_with_same_identifier_within_scope() {
+        let program = r#"
+        {
+          var foo;
+          fn foo() {} // foo already exists!
+        }
+        "#;
+
+        let result = resolve(&parse(&lex(program)).unwrap());
+        assert!(matches!(result, Err(Error::AlreadyDeclared(_))));
     }
 }
