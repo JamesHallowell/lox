@@ -13,7 +13,10 @@ pub use value::Value;
 
 mod env;
 use {
-    crate::parser::{resolve, FnStmt, Ident, ResolveError, ReturnStmt},
+    crate::{
+        interpreter::function::native::Print,
+        parser::{resolve, FnStmt, Ident, ResolveError, ReturnStmt, Stmt},
+    },
     env::Environment,
 };
 
@@ -44,7 +47,7 @@ impl Printer for StdOutPrinter {
 impl Interpreter {
     pub fn with_printer(printer: impl Printer + 'static) -> Self {
         Self {
-            environment: Environment::default().with_print(printer),
+            environment: Environment::default().with_global("print", Print::new(printer)),
         }
     }
 
@@ -54,9 +57,14 @@ impl Interpreter {
         let stmts = resolve(&stmts)?;
 
         for stmt in stmts {
-            self.visit_stmt(&stmt)?;
+            self.execute(stmt)?;
         }
 
+        Ok(())
+    }
+
+    fn execute(&mut self, stmt: Stmt) -> Result<(), Error> {
+        self.visit_stmt(&stmt)?;
         Ok(())
     }
 }

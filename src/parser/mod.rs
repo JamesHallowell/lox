@@ -82,6 +82,12 @@ pub struct Ident {
     name: Rc<str>,
 }
 
+impl From<&'_ str> for Ident {
+    fn from(name: &str) -> Self {
+        Self { name: name.into() }
+    }
+}
+
 impl Ident {
     pub fn new(name: impl AsRef<str>) -> Self {
         let name = name.as_ref().into();

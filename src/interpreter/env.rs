@@ -2,7 +2,7 @@ use {
     crate::{
         interpreter::{
             function::native::{Assert, Clock, Print, Sleep},
-            Printer, StdOutPrinter,
+            StdOutPrinter,
         },
         parser::Ident,
         Value,
@@ -18,10 +18,10 @@ pub struct Environment {
 impl Default for Environment {
     fn default() -> Self {
         Self::new()
-            .with_clock()
-            .with_assert()
-            .with_sleep()
-            .with_print(StdOutPrinter)
+            .with_global("assert", Assert)
+            .with_global("print", Print::new(StdOutPrinter))
+            .with_global("clock", Clock)
+            .with_global("sleep", Sleep)
     }
 }
 
@@ -42,6 +42,11 @@ impl Environment {
         }
     }
 
+    pub fn with_global(mut self, ident: impl Into<Ident>, value: impl Into<Value>) -> Self {
+        self.globals.insert(ident.into(), value.into());
+        self
+    }
+
     pub fn get(&self, ident: &Ident) -> Option<&Value> {
         for scope in self.locals.iter().rev() {
             if let Some(value) = scope.get(&ident.id()) {
@@ -60,30 +65,6 @@ impl Environment {
         }
 
         self.globals.get_mut(ident)
-    }
-
-    pub fn with_assert(mut self) -> Self {
-        self.globals.insert(Ident::new("assert"), Assert.into());
-        self
-    }
-
-    pub fn with_clock(mut self) -> Self {
-        self.globals.insert(Ident::new("clock"), Clock.into());
-        self
-    }
-
-    pub fn with_print<P>(mut self, printer: P) -> Self
-    where
-        P: Printer + 'static,
-    {
-        self.globals
-            .insert(Ident::new("print"), Print::new(printer).into());
-        self
-    }
-
-    pub fn with_sleep(mut self) -> Self {
-        self.globals.insert(Ident::new("sleep"), Sleep.into());
-        self
     }
 
     pub fn push_scope(&mut self) {
