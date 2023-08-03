@@ -3,8 +3,8 @@ use crate::{
     lexer::lex,
     parser::{
         parse, AssignExpr, BinaryExpr, BinaryOperator, BlockStmt, CallableExpr,
-        Error as ParserError, Expr, ExprStmt, GroupExpr, IfStmt, LiteralExpr, LogicalExpr,
-        LogicalOperator, Stmt, UnaryExpr, UnaryOperator, VarExpr, VarStmt, Visitor, WhileStmt,
+        Error as ParserError, ExprStmt, ExprVisitor, GroupExpr, IfStmt, LiteralExpr, LogicalExpr,
+        LogicalOperator, StmtVisitor, UnaryExpr, UnaryOperator, VarExpr, VarStmt, WhileStmt,
     },
 };
 
@@ -13,7 +13,7 @@ pub use value::Value;
 
 mod env;
 use {
-    crate::parser::{FnStmt, ReturnStmt},
+    crate::parser::{resolve, FnStmt, Ident, ResolveError, ReturnStmt},
     env::Environment,
 };
 
@@ -51,6 +51,7 @@ impl Interpreter {
     pub fn interpret(&mut self, program: &str) -> Result<(), Error> {
         let tokens = lex(program);
         let stmts = parse(&tokens)?;
+        let stmts = resolve(&stmts)?;
 
         for stmt in stmts {
             self.visit_stmt(&stmt)?;
@@ -65,8 +66,11 @@ pub enum Error {
     #[error(transparent)]
     Parser(#[from] ParserError),
 
+    #[error(transparent)]
+    Resolve(#[from] ResolveError),
+
     #[error("undefined variable {0}")]
-    UndefinedVar(String),
+    UndefinedVar(Ident),
 
     #[error("unexpected unary operator {0}")]
     UnexpectedUnaryOperator(String),
@@ -87,23 +91,11 @@ pub enum Error {
     WrongArgType,
 }
 
-impl Visitor for Interpreter {
-    type Output = Value;
+impl StmtVisitor for Interpreter {
+    type Output = Option<Value>;
     type Error = Error;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Option<Self::Output>, Self::Error> {
-        match stmt {
-            Stmt::Block(stmt) => self.visit_block_stmt(stmt),
-            Stmt::Expr(stmt) => self.visit_expr_stmt(stmt),
-            Stmt::Fn(stmt) => self.visit_fn_stmt(stmt),
-            Stmt::If(stmt) => self.visit_if_stmt(stmt),
-            Stmt::Return(stmt) => self.visit_return_stmt(stmt),
-            Stmt::Var(stmt) => self.visit_var_stmt(stmt),
-            Stmt::While(stmt) => self.visit_while_stmt(stmt),
-        }
-    }
-
-    fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_block_stmt(&mut self, stmt: &BlockStmt) -> Result<Self::Output, Self::Error> {
         self.environment.push_scope();
 
         let mut result = None;
@@ -119,20 +111,18 @@ impl Visitor for Interpreter {
         Ok(result)
     }
 
-    fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_expr_stmt(&mut self, stmt: &ExprStmt) -> Result<Self::Output, Self::Error> {
         let _value = self.visit_expr(&stmt.expr)?;
         Ok(None)
     }
 
-    fn visit_fn_stmt(&mut self, stmt: &FnStmt) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_fn_stmt(&mut self, stmt: &FnStmt) -> Result<Self::Output, Self::Error> {
         let function = Function::new(stmt.clone());
-        self.environment
-            .global_scope()
-            .define(&stmt.ident, function);
+        self.environment.define(&stmt.ident, function);
         Ok(None)
     }
 
-    fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_if_stmt(&mut self, stmt: &IfStmt) -> Result<Self::Output, Self::Error> {
         if self.visit_expr(&stmt.condition)?.is_truthy() {
             self.visit_stmt(&stmt.then_branch)
         } else if let Some(else_branch) = &stmt.else_branch {
@@ -142,31 +132,26 @@ impl Visitor for Interpreter {
         }
     }
 
-    fn visit_return_stmt(
-        &mut self,
-        stmt: &ReturnStmt,
-    ) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_return_stmt(&mut self, stmt: &ReturnStmt) -> Result<Self::Output, Self::Error> {
         match &stmt.expr {
             Some(expr) => self.visit_expr(expr).map(Some),
             None => Ok(None),
         }
     }
 
-    fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_var_stmt(&mut self, stmt: &VarStmt) -> Result<Self::Output, Self::Error> {
         let init_value = if let Some(expr) = &stmt.init {
             self.visit_expr(expr)?
         } else {
             Value::Nil
         };
 
-        self.environment
-            .current_scope()
-            .define(&stmt.ident, init_value);
+        self.environment.define(&stmt.ident, init_value);
 
         Ok(None)
     }
 
-    fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<Option<Self::Output>, Self::Error> {
+    fn visit_while_stmt(&mut self, stmt: &WhileStmt) -> Result<Self::Output, Self::Error> {
         while self.visit_expr(&stmt.condition)?.is_truthy() {
             let value = self.visit_stmt(&stmt.body)?;
             if value.is_some() {
@@ -176,31 +161,21 @@ impl Visitor for Interpreter {
 
         Ok(None)
     }
+}
 
-    fn visit_expr(&mut self, expr: &Expr) -> Result<Self::Output, Self::Error> {
-        match expr {
-            Expr::Assign(expr) => self.visit_assign_expr(expr),
-            Expr::Binary(expr) => self.visit_binary_expr(expr),
-            Expr::Callable(expr) => self.visit_callable_expr(expr),
-            Expr::Unary(expr) => self.visit_unary_expr(expr),
-            Expr::Group(expr) => self.visit_group_expr(expr),
-            Expr::Literal(expr) => self.visit_literal_expr(expr),
-            Expr::Logical(expr) => self.visit_logical_expr(expr),
-            Expr::Var(expr) => self.visit_var_expr(expr),
-        }
-    }
+impl ExprVisitor for Interpreter {
+    type Output = Value;
+    type Error = Error;
 
     fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<Self::Output, Self::Error> {
         let value = self.visit_expr(&expr.value)?;
 
-        for scope in self.environment.scopes_mut() {
-            if let Some(var) = scope.get_mut(&expr.ident) {
-                *var = value;
-                return Ok(var.clone());
-            }
+        if let Some(var) = self.environment.get_mut(&expr.ident) {
+            *var = value;
+            return Ok(var.clone());
         }
 
-        Err(Error::UndefinedVar(expr.ident.to_string()))
+        Err(Error::UndefinedVar(expr.ident.clone()))
     }
 
     fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Result<Self::Output, Self::Error> {
@@ -266,13 +241,11 @@ impl Visitor for Interpreter {
     }
 
     fn visit_var_expr(&mut self, expr: &VarExpr) -> Result<Self::Output, Self::Error> {
-        for scope in self.environment.scopes() {
-            if let Some(var) = scope.get(&expr.ident) {
-                return Ok(var.clone());
-            }
+        if let Some(var) = self.environment.get(&expr.ident) {
+            return Ok(var.clone());
         }
 
-        Err(Error::UndefinedVar(expr.ident.to_string()))
+        Err(Error::UndefinedVar(expr.ident.clone()))
     }
 }
 
@@ -553,6 +526,24 @@ mod test {
 
         assert(divide(2, 0) == "bad input");
         assert(divide(2, 2) == 1);
+        "#;
+
+        Interpreter::default().interpret(program).unwrap();
+    }
+
+    #[test]
+    fn scope_resolution_bug() {
+        let program = r#"
+        var a = "global";
+        {
+          fn getA() {
+            return a;
+          }
+        
+          assert(getA() == "global");
+          var a = "block";
+          assert(getA() == "global");
+        }
         "#;
 
         Interpreter::default().interpret(program).unwrap();

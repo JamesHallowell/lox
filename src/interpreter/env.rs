@@ -4,13 +4,15 @@ use {
             function::native::{Assert, Clock, Print, Sleep},
             Printer, StdOutPrinter,
         },
+        parser::Ident,
         Value,
     },
     std::collections::HashMap,
 };
 
 pub struct Environment {
-    scopes: Vec<Scope>,
+    globals: HashMap<Ident, Value>,
+    locals: Vec<HashMap<usize, Value>>,
 }
 
 impl Default for Environment {
@@ -26,17 +28,47 @@ impl Default for Environment {
 impl Environment {
     pub fn new() -> Self {
         Self {
-            scopes: vec![Scope::default()],
+            globals: HashMap::default(),
+            locals: Vec::default(),
         }
     }
 
+    pub fn define(&mut self, ident: &Ident, value: impl Into<Value>) {
+        let value = value.into();
+        if self.locals.is_empty() {
+            self.globals.insert(ident.clone(), value);
+        } else {
+            self.locals.last_mut().unwrap().insert(ident.id(), value);
+        }
+    }
+
+    pub fn get(&self, ident: &Ident) -> Option<&Value> {
+        for scope in self.locals.iter().rev() {
+            if let Some(value) = scope.get(&ident.id()) {
+                return Some(value);
+            }
+        }
+
+        self.globals.get(ident)
+    }
+
+    pub fn get_mut(&mut self, ident: &Ident) -> Option<&mut Value> {
+        for scope in self.locals.iter_mut().rev() {
+            if let Some(value) = scope.get_mut(&ident.id()) {
+                return Some(value);
+            }
+        }
+
+        self.globals.get_mut(ident)
+    }
+
     pub fn with_assert(mut self) -> Self {
-        self.global_scope().define("assert", Assert);
+        self.globals.insert(Ident::new("assert"), Assert.into());
         self
     }
 
     pub fn with_clock(mut self) -> Self {
-        self.global_scope().define("clock", Clock);
+        self.globals.insert(Ident::new("clock"), Clock.into());
         self
     }
 
@@ -44,59 +76,21 @@ impl Environment {
     where
         P: Printer + 'static,
     {
-        self.global_scope().define("print", Print::new(printer));
+        self.globals
+            .insert(Ident::new("print"), Print::new(printer).into());
         self
     }
 
     pub fn with_sleep(mut self) -> Self {
-        self.global_scope().define("sleep", Sleep);
+        self.globals.insert(Ident::new("sleep"), Sleep.into());
         self
     }
 
     pub fn push_scope(&mut self) {
-        self.scopes.push(Scope::default());
+        self.locals.push(HashMap::default());
     }
 
     pub fn pop_scope(&mut self) {
-        if self.scopes.len() == 1 {
-            return;
-        }
-
-        self.scopes.pop();
-    }
-
-    pub fn global_scope(&mut self) -> &mut Scope {
-        &mut self.scopes[0]
-    }
-
-    pub fn current_scope(&mut self) -> &mut Scope {
-        self.scopes.last_mut().expect("always at least one scope")
-    }
-
-    pub fn scopes(&self) -> impl Iterator<Item = &Scope> {
-        self.scopes.iter().rev()
-    }
-
-    pub fn scopes_mut(&mut self) -> impl Iterator<Item = &mut Scope> {
-        self.scopes.iter_mut().rev()
-    }
-}
-
-#[derive(Default)]
-pub struct Scope {
-    values: HashMap<String, Value>,
-}
-
-impl Scope {
-    pub fn define(&mut self, ident: &str, value: impl Into<Value>) {
-        self.values.insert(ident.to_owned(), value.into());
-    }
-
-    pub fn get(&self, ident: &str) -> Option<&Value> {
-        self.values.get(ident)
-    }
-
-    pub fn get_mut(&mut self, ident: &str) -> Option<&mut Value> {
-        self.values.get_mut(ident)
+        self.locals.pop();
     }
 }

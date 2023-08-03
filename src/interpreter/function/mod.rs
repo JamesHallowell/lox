@@ -4,7 +4,7 @@ use {
             value::{Arity, Callable},
             Error,
         },
-        parser::{FnStmt, Visitor},
+        parser::{FnStmt, StmtVisitor},
         Interpreter, Value,
     },
     std::{cell::RefCell, rc::Rc},
@@ -30,16 +30,18 @@ impl Callable for Function {
     fn call(&mut self, args: &[Value], interpreter: &mut Interpreter) -> Result<Value, Error> {
         interpreter.environment.push_scope();
         for (param, arg) in self.stmt.params.iter().zip(args) {
-            interpreter
-                .environment
-                .current_scope()
-                .define(param, arg.clone());
+            interpreter.environment.define(param, arg.clone());
         }
 
-        let value = interpreter.visit_stmt(&self.stmt.body)?;
+        for stmt in &self.stmt.body {
+            if let Some(value) = interpreter.visit_stmt(stmt)? {
+                interpreter.environment.pop_scope();
+                return Ok(value);
+            }
+        }
 
         interpreter.environment.pop_scope();
-        Ok(value.unwrap_or(Value::Nil))
+        Ok(Value::Nil)
     }
 }
 

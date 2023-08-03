@@ -1,6 +1,6 @@
 use crate::{
     lexer::{Keyword, Literal, Token},
-    parser::{Error, TokenStream},
+    parser::{Error, Ident, TokenStream},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,7 +17,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssignExpr {
-    pub ident: String,
+    pub ident: Ident,
     pub value: Box<Expr>,
 }
 
@@ -112,7 +112,7 @@ pub enum LogicalOperator {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarExpr {
-    pub ident: String,
+    pub ident: Ident,
 }
 
 pub fn expression(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error> {
@@ -363,7 +363,7 @@ pub fn primary(tokens: TokenStream<'_>) -> Result<(Expr, TokenStream<'_>), Error
         (Token::Literal(Literal::String(string)), tokens) => Ok((Expr::from(string), tokens)),
         (Token::Literal(Literal::Identifier(ident)), tokens) => Ok((
             Expr::Var(VarExpr {
-                ident: ident.to_string(),
+                ident: Ident::new(ident),
             }),
             tokens,
         )),

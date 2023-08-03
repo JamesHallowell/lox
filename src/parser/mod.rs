@@ -1,10 +1,20 @@
-use crate::lexer::{Keyword, Literal, Token};
+use {
+    crate::lexer::{Keyword, Literal, Token},
+    std::{
+        fmt::{Debug, Display, Formatter},
+        hash::Hash,
+        rc::Rc,
+    },
+};
 
 mod visitor;
-pub use visitor::Visitor;
+pub use visitor::{ExprVisitor, StmtVisitor};
 
 mod expr;
 pub use expr::*;
+
+mod resolver;
+pub use resolver::{resolve, Error as ResolveError};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TokenStream<'input> {
@@ -22,13 +32,14 @@ impl<'input> TokenStream<'input> {
 
     fn next(self) -> Result<(Token<'input>, Self), Error> {
         match self.peek() {
-            Some(token) => Ok((
-                token,
-                Self {
-                    tokens: &self.tokens[1..],
-                },
-            )),
+            Some(token) => Ok((token, self.advance())),
             None => Err(Error::UnexpectedEndOfTokenStream),
+        }
+    }
+
+    fn advance(self) -> Self {
+        Self {
+            tokens: &self.tokens[1..],
         }
     }
 
@@ -44,9 +55,11 @@ impl<'input> TokenStream<'input> {
         }
     }
 
-    fn next_ident(self) -> Result<(&'input str, TokenStream<'input>), Error> {
+    fn expect_ident(self) -> Result<(Ident, TokenStream<'input>), Error> {
         match self.next()? {
-            (Token::Literal(Literal::Identifier(ident)), token_stream) => Ok((ident, token_stream)),
+            (Token::Literal(Literal::Identifier(ident)), token_stream) => {
+                Ok((Ident::new(ident), token_stream))
+            }
             (token, _) => Err(Error::UnexpectedToken(format!("{:?}", token))),
         }
     }
@@ -61,6 +74,38 @@ impl<'input> TokenStream<'input> {
             Some(token) => Err(Error::UnexpectedToken(format!("{:?}", token))),
             None => Err(Error::UnexpectedEndOfTokenStream),
         }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct Ident {
+    name: Rc<str>,
+}
+
+impl Ident {
+    pub fn new(name: impl AsRef<str>) -> Self {
+        let name = name.as_ref().into();
+
+        Self { name }
+    }
+
+    pub fn id(&self) -> usize {
+        self.name.as_ptr() as usize
+    }
+}
+
+impl Debug for Ident {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Ident")
+            .field("name", &self.name)
+            .field("id", &self.id())
+            .finish()
+    }
+}
+
+impl Display for Ident {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }
 
@@ -87,9 +132,9 @@ pub struct ExprStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FnStmt {
-    pub ident: String,
-    pub params: Vec<String>,
-    pub body: Box<Stmt>,
+    pub ident: Ident,
+    pub params: Vec<Ident>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +151,7 @@ pub struct ReturnStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VarStmt {
-    pub ident: String,
+    pub ident: Ident,
     pub init: Option<Expr>,
 }
 
@@ -174,13 +219,13 @@ fn block_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), E
 
 fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
     let tokens = tokens.expect(Keyword::Fn)?;
-    let (ident, tokens) = tokens.next_ident()?;
+    let (ident, tokens) = tokens.expect_ident()?;
 
     let mut tokens = tokens.expect(Token::LeftParen)?;
     let mut params = vec![];
     while !matches!(tokens.peek(), Some(Token::RightParen)) {
-        let (param, remaining_tokens) = tokens.next_ident()?;
-        params.push(param.to_string());
+        let (param, remaining_tokens) = tokens.expect_ident()?;
+        params.push(param);
 
         match remaining_tokens.next_if(Token::Comma)? {
             Some((_, remaining_tokens)) => tokens = remaining_tokens,
@@ -189,13 +234,21 @@ fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
     }
     let tokens = tokens.expect(Token::RightParen)?;
 
-    let (body, tokens) = block_statement(tokens)?;
+    let mut tokens = tokens.expect(Token::LeftBrace)?;
+    let mut body = vec![];
+    while !matches!(tokens.peek(), Some(Token::RightBrace)) {
+        let (stmt, remaining_tokens) = statement(tokens)?;
+
+        body.push(stmt);
+        tokens = remaining_tokens;
+    }
+    let tokens = tokens.expect(Token::RightBrace)?;
 
     Ok((
         Stmt::Fn(FnStmt {
-            ident: ident.to_string(),
+            ident,
             params,
-            body: Box::new(body),
+            body,
         }),
         tokens,
     ))
@@ -244,7 +297,7 @@ fn return_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), 
 
 fn var_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
     let tokens = tokens.expect(Keyword::Var)?;
-    let (ident, tokens) = tokens.next_ident()?;
+    let (ident, tokens) = tokens.expect_ident()?;
 
     let (init, tokens) = match tokens.next_if(Token::Equal)? {
         Some((_, tokens)) => {
@@ -256,13 +309,7 @@ fn var_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Err
 
     let tokens = tokens.expect(Token::Semicolon)?;
 
-    Ok((
-        Stmt::Var(VarStmt {
-            ident: ident.to_string(),
-            init,
-        }),
-        tokens,
-    ))
+    Ok((Stmt::Var(VarStmt { ident, init }), tokens))
 }
 
 fn while_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
@@ -436,7 +483,7 @@ mod test {
         let first = Stmt::Expr(ExprStmt {
             expr: Expr::Callable(CallableExpr {
                 callee: Box::new(Expr::Var(VarExpr {
-                    ident: "foo".to_string(),
+                    ident: Ident::new("foo"),
                 })),
                 args: vec![],
             }),
@@ -444,7 +491,7 @@ mod test {
         let second = Stmt::Expr(ExprStmt {
             expr: Expr::Callable(CallableExpr {
                 callee: Box::new(Expr::Var(VarExpr {
-                    ident: "foo".to_string(),
+                    ident: Ident::new("foo"),
                 })),
                 args: vec![Expr::from(5), Expr::from(true)],
             }),
@@ -452,7 +499,7 @@ mod test {
         let third = Stmt::Expr(ExprStmt {
             expr: Expr::Callable(CallableExpr {
                 callee: Box::new(Expr::Var(VarExpr {
-                    ident: "foo".to_string(),
+                    ident: Ident::new("foo"),
                 })),
                 args: vec![
                     Expr::from(5),
@@ -480,26 +527,24 @@ mod test {
         assert_eq!(
             statements,
             vec![Stmt::Fn(FnStmt {
-                ident: "foo".to_string(),
-                params: vec!["a".to_string(), "b".to_string()],
-                body: Box::new(Stmt::Block(BlockStmt {
-                    stmts: vec![Stmt::Expr(ExprStmt {
-                        expr: Expr::Callable(CallableExpr {
-                            callee: Box::new(Expr::Var(VarExpr {
-                                ident: "print".to_string()
+                ident: Ident::new("foo"),
+                params: vec![Ident::new("a"), Ident::new("b")],
+                body: vec![Stmt::Expr(ExprStmt {
+                    expr: Expr::Callable(CallableExpr {
+                        callee: Box::new(Expr::Var(VarExpr {
+                            ident: Ident::new("print")
+                        })),
+                        args: vec![Expr::Binary(BinaryExpr {
+                            left: Box::new(Expr::Var(VarExpr {
+                                ident: Ident::new("a")
                             })),
-                            args: vec![Expr::Binary(BinaryExpr {
-                                left: Box::new(Expr::Var(VarExpr {
-                                    ident: "a".to_string()
-                                })),
-                                operator: BinaryOperator::Plus,
-                                right: Box::new(Expr::Var(VarExpr {
-                                    ident: "b".to_string()
-                                }))
-                            })]
-                        })
-                    })]
-                }))
+                            operator: BinaryOperator::Plus,
+                            right: Box::new(Expr::Var(VarExpr {
+                                ident: Ident::new("b")
+                            }))
+                        })]
+                    })
+                })]
             })]
         );
     }
