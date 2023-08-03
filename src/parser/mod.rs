@@ -2,7 +2,7 @@ use {
     crate::lexer::{Keyword, Literal, Token},
     std::{
         fmt::{Debug, Display, Formatter},
-        hash::Hash,
+        hash::{Hash, Hasher},
         rc::Rc,
     },
 };
@@ -92,40 +92,67 @@ impl<'input> TokenStream<'input> {
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
-pub struct Ident {
-    name: Rc<str>,
-}
+pub struct Ident(Rc<str>);
 
 impl From<&'_ str> for Ident {
     fn from(name: &str) -> Self {
-        Self { name: name.into() }
+        Self(name.into())
     }
 }
 
 impl Ident {
     pub fn new(name: impl AsRef<str>) -> Self {
-        let name = name.as_ref().into();
-
-        Self { name }
+        Self(name.as_ref().into())
     }
 
-    pub fn id(&self) -> usize {
-        self.name.as_ptr() as usize
+    pub fn name(&self) -> &str {
+        self.0.as_ref()
+    }
+
+    pub fn address(&self) -> *const u8 {
+        self.0.as_ptr()
     }
 }
 
 impl Debug for Ident {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Ident")
-            .field("name", &self.name)
-            .field("id", &self.id())
+            .field("name", &self.name())
+            .field("address", &self.address())
             .finish()
     }
 }
 
 impl Display for Ident {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
+        write!(f, "{}", self.name())
+    }
+}
+
+#[derive(Debug, Clone, Eq)]
+pub struct IdentByAddress(Ident);
+
+impl IdentByAddress {
+    pub fn ident(&self) -> &Ident {
+        &self.0
+    }
+}
+
+impl From<&Ident> for IdentByAddress {
+    fn from(ident: &Ident) -> Self {
+        Self(ident.clone())
+    }
+}
+
+impl PartialEq for IdentByAddress {
+    fn eq(&self, other: &Self) -> bool {
+        self.ident().address() == other.ident().address()
+    }
+}
+
+impl Hash for IdentByAddress {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ident().address().hash(state)
     }
 }
 

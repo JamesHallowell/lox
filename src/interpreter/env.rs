@@ -4,7 +4,7 @@ use {
             function::native::{Assert, Clock, Print, Sleep},
             StdOutPrinter,
         },
-        parser::Ident,
+        parser::{Ident, IdentByAddress},
         Value,
     },
     std::collections::HashMap,
@@ -12,7 +12,7 @@ use {
 
 pub struct Environment {
     globals: HashMap<Ident, Value>,
-    locals: Vec<HashMap<usize, Value>>,
+    locals: Vec<HashMap<IdentByAddress, Value>>,
 }
 
 impl Default for Environment {
@@ -38,7 +38,7 @@ impl Environment {
         if self.locals.is_empty() {
             self.globals.insert(ident.clone(), value);
         } else {
-            self.locals.last_mut().unwrap().insert(ident.id(), value);
+            self.locals.last_mut().unwrap().insert(ident.into(), value);
         }
     }
 
@@ -49,7 +49,7 @@ impl Environment {
 
     pub fn get(&self, ident: &Ident) -> Option<&Value> {
         for scope in self.locals.iter().rev() {
-            if let Some(value) = scope.get(&ident.id()) {
+            if let Some(value) = scope.get(&ident.into()) {
                 return Some(value);
             }
         }
@@ -59,7 +59,7 @@ impl Environment {
 
     pub fn get_mut(&mut self, ident: &Ident) -> Option<&mut Value> {
         for scope in self.locals.iter_mut().rev() {
-            if let Some(value) = scope.get_mut(&ident.id()) {
+            if let Some(value) = scope.get_mut(&ident.into()) {
                 return Some(value);
             }
         }
