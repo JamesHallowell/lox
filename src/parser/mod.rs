@@ -21,6 +21,20 @@ pub struct TokenStream<'input> {
     tokens: &'input [Token<'input>],
 }
 
+impl<'input> Iterator for TokenStream<'input> {
+    type Item = Token<'input>;
+
+    fn next(&mut self) -> Option<Token<'input>> {
+        match self.tokens.first().copied() {
+            Some(token) => {
+                self.advance();
+                Some(token)
+            }
+            None => None,
+        }
+    }
+}
+
 impl<'input> TokenStream<'input> {
     fn is_empty(&self) -> bool {
         self.tokens.is_empty()
@@ -206,21 +220,24 @@ fn statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> 
     }
 }
 
-fn block_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
-    let mut stmts = vec![];
-
+fn braced_scope(tokens: TokenStream<'_>) -> Result<(Vec<Stmt>, TokenStream<'_>), Error> {
     let mut tokens = tokens.expect(Token::LeftBrace)?;
 
-    while !matches!(tokens.peek(), Some(Token::RightBrace)) {
+    let mut stmts = vec![];
+    while tokens.peek() != Some(Token::RightBrace) {
         let (stmt, remaining_tokens) = statement(tokens)?;
 
         stmts.push(stmt);
         tokens = remaining_tokens;
     }
 
-    let tokens = tokens.expect(Token::RightBrace)?;
+    tokens = tokens.expect(Token::RightBrace)?;
 
-    Ok((Stmt::Block(BlockStmt { stmts }), tokens))
+    Ok((stmts, tokens))
+}
+
+fn block_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
+    braced_scope(tokens).map(|(stmts, tokens)| (Stmt::Block(BlockStmt { stmts }), tokens))
 }
 
 fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Error> {
@@ -229,7 +246,7 @@ fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
 
     let mut tokens = tokens.expect(Token::LeftParen)?;
     let mut params = vec![];
-    while !matches!(tokens.peek(), Some(Token::RightParen)) {
+    while tokens.peek() != Some(Token::RightParen) {
         let (param, remaining_tokens) = tokens.expect_ident()?;
         params.push(param);
 
@@ -238,17 +255,9 @@ fn fn_statement(tokens: TokenStream<'_>) -> Result<(Stmt, TokenStream<'_>), Erro
             None => tokens = remaining_tokens,
         }
     }
-    let tokens = tokens.expect(Token::RightParen)?;
+    tokens = tokens.expect(Token::RightParen)?;
 
-    let mut tokens = tokens.expect(Token::LeftBrace)?;
-    let mut body = vec![];
-    while !matches!(tokens.peek(), Some(Token::RightBrace)) {
-        let (stmt, remaining_tokens) = statement(tokens)?;
-
-        body.push(stmt);
-        tokens = remaining_tokens;
-    }
-    let tokens = tokens.expect(Token::RightBrace)?;
+    let (body, tokens) = braced_scope(tokens)?;
 
     Ok((
         Stmt::Fn(FnStmt {
@@ -383,12 +392,9 @@ fn for_statement_init(tokens: TokenStream<'_>) -> Result<(Option<Stmt>, TokenStr
 fn for_statement_condition(
     tokens: TokenStream<'_>,
 ) -> Result<(Option<Expr>, TokenStream<'_>), Error> {
-    Ok(match tokens.peek() {
-        Some(Token::Semicolon) => {
-            let (_, tokens) = tokens.next()?;
-            (None, tokens)
-        }
-        _ => {
+    Ok(match tokens.next_if(Token::Semicolon)? {
+        Some(_) => (None, tokens),
+        None => {
             let (expr, tokens) = expression(tokens)?;
             let tokens = tokens.expect(Token::Semicolon)?;
             (Some(expr), tokens)

@@ -59,7 +59,7 @@ struct Scope {
 }
 
 impl Resolver {
-    pub fn resolve(&mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, Error> {
+    fn resolve(&mut self, stmts: &[Stmt]) -> Result<Vec<Stmt>, Error> {
         stmts.iter().map(|stmt| self.visit_stmt(stmt)).collect()
     }
 
@@ -78,7 +78,7 @@ impl Resolver {
         Ok(())
     }
 
-    pub fn set_state(&mut self, ident: &Ident, state: VarState) {
+    fn set_state(&mut self, ident: &Ident, state: VarState) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.locals.insert(ident.clone(), state);
         }
