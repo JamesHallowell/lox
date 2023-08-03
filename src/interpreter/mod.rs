@@ -566,4 +566,24 @@ mod test {
 
         Interpreter::default().interpret(program).unwrap();
     }
+
+    #[test]
+    fn call_function_with_too_many_arguments() {
+        let program = r#"
+        fn foo(a, b) {
+            return a + b;
+        }
+        
+        assert(foo(1, 2, 3) == 3);
+        "#;
+
+        let result = Interpreter::default().interpret(program);
+        assert!(matches!(
+            result,
+            Err(Error::ArityMismatch {
+                expected: 2,
+                actual: 3
+            })
+        ));
+    }
 }
